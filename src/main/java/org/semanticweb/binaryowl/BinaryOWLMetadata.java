@@ -54,7 +54,7 @@ import java.util.*;
  * Date: 08/05/2012
  * <p>
  *     A structure for holding key value pairs that can be serialized in a binary format.  The values may take the form
- *     of primitive types:  string, int, long, boolean, double, byte array, or may also be instances of {@OWLObject}.
+ *     of primitive types:  string, int, long, boolean, double, byte array, or may also be instances of {OWLObject}.
  * </p>
  */
 public class BinaryOWLMetadata {

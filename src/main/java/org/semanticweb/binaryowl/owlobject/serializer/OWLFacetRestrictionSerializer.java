@@ -108,7 +108,7 @@ public class OWLFacetRestrictionSerializer extends OWLObjectSerializer<OWLFacetR
 
     /**
      * Gets the {@link OWLFacet} for the specified facet marker index.
-     * @param facetMarker The facet marker index (>= 0, <= 10).
+     * @param facetMarker The facet marker index (&gt;= 0, &lt;= 10).
      * @return The corresponding {@link OWLFacet}.
      * @throws IndexOutOfBoundsException if the facet marker is out of the specified range.
      */
