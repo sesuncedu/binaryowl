@@ -42,11 +42,11 @@ package org.semanticweb.binaryowl.owlobject.serializer;
 import org.semanticweb.binaryowl.BinaryOWLParseException;
 import org.semanticweb.binaryowl.stream.BinaryOWLInputStream;
 import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
+import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDatatype;
 import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
 import uk.ac.manchester.cs.owl.owlapi.OWLDatatypeImpl;
-import uk.ac.manchester.cs.owl.owlapi.OWLLiteralImplNoCompression;
 
 import java.io.IOException;
 
@@ -75,17 +75,10 @@ public class OWLLiteralSerializer extends OWLObjectSerializer<OWLLiteral> {
     private static final byte NO_LANG_MARKER = 0;
 
 
-    private static final OWLDatatype RDF_PLAIN_LITERAL_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.RDF_PLAIN_LITERAL.getIRI());
-
     private static final OWLDatatype XSD_STRING_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.XSD_STRING.getIRI());
 
     private static final OWLDatatype XSD_BOOLEAN_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.XSD_BOOLEAN.getIRI());
 
-
-
-    private static final OWLLiteral BOOLEAN_TRUE = new OWLLiteralImplNoCompression("true", null, XSD_BOOLEAN_DATATYPE);
-
-    private static final OWLLiteral BOOLEAN_FALSE = new OWLLiteralImplNoCompression("false", null, XSD_BOOLEAN_DATATYPE);
 
     @Override
     protected void writeObject(OWLLiteral object, BinaryOWLOutputStream outputStream) throws IOException {
@@ -104,17 +97,18 @@ public class OWLLiteralSerializer extends OWLObjectSerializer<OWLLiteral> {
     }
 
     private OWLLiteral readRawLiteral(BinaryOWLInputStream is) throws IOException {
+        OWLDataFactory dataFactory = is.getDataFactory();
         int typeMarker = is.readByte();
         if (typeMarker == RDF_PLAIN_LITERAL_MARKER) {
             int langMarker = is.readByte();
             if (langMarker == LANG_MARKER) {
                 String lang = is.readUTF();
                 byte[] literalBytes = readBytes(is);
-                return new OWLLiteralImplNoCompression(literalBytes, lang, RDF_PLAIN_LITERAL_DATATYPE);
+                return dataFactory.getOWLLiteral(new String(literalBytes,UTF_8), lang);
             }
             else if (langMarker == NO_LANG_MARKER) {
                 byte[] literalBytes = readBytes(is);
-                return new OWLLiteralImplNoCompression(literalBytes, null, RDF_PLAIN_LITERAL_DATATYPE);
+                return dataFactory.getOWLLiteral(new String(literalBytes,UTF_8), "");
             }
             else {
                 throw new IOException("Unknown lang marker: " + langMarker);
@@ -122,21 +116,17 @@ public class OWLLiteralSerializer extends OWLObjectSerializer<OWLLiteral> {
         }
         else if(typeMarker == XSD_STRING_MARKER) {
             byte[] literalBytes = readBytes(is);
-            return new OWLLiteralImplNoCompression(literalBytes, null, XSD_STRING_DATATYPE);
+            return dataFactory.getOWLLiteral(new String(literalBytes,UTF_8));
         }
         else if(typeMarker == XSD_BOOLEAN_MARKER) {
-            if(is.readBoolean()) {
-                return BOOLEAN_TRUE;
-            }
-            else {
-                return BOOLEAN_FALSE;
-            }
+                return dataFactory.getOWLLiteral(is.readBoolean());
+
         }
         else if (typeMarker == OTHER_DATATYPE_MARKER) {
 
             OWLDatatype datatype = is.readDatatypeIRI();
             byte[] literalBytes = readBytes(is);
-            return new OWLLiteralImplNoCompression(literalBytes, null, datatype);
+            return dataFactory.getOWLLiteral(new String(literalBytes,UTF_8), datatype);
         }
         else {
             throw new RuntimeException("Unknown type marker: " + typeMarker);
@@ -153,7 +143,7 @@ public class OWLLiteralSerializer extends OWLObjectSerializer<OWLLiteral> {
     }
 
     private void writeRawLiteral(BinaryOWLOutputStream outputStream, OWLLiteral literal) throws IOException {
-        if(literal.getDatatype().equals(XSD_BOOLEAN_DATATYPE)) {
+          if(literal.isBoolean()) {
             outputStream.writeByte(XSD_BOOLEAN_MARKER);
             outputStream.writeBoolean(literal.parseBoolean());
             return;
@@ -176,14 +166,9 @@ public class OWLLiteralSerializer extends OWLObjectSerializer<OWLLiteral> {
             outputStream.writeIRI(literal.getDatatype().getIRI());
         }
 
-        byte[] literalBytes;
-        if (literal instanceof OWLLiteralImplNoCompression) {
-            literalBytes = ((OWLLiteralImplNoCompression) literal).getLiteral().getBytes(UTF_8);
-        }
-        else {
-            literalBytes = literal.getLiteral().getBytes(UTF_8);
-        }
-        writeBytes(literalBytes, outputStream);
+        byte[] utf8Bytes = literal.getLiteral().getBytes(UTF_8);
+
+        writeBytes(utf8Bytes, outputStream);
 
 
 

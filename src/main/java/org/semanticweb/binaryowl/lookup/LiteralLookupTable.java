@@ -92,8 +92,6 @@ public class LiteralLookupTable {
 
     private IRILookupTable iriLookupTable;
 
-    private static final OWLDatatype RDF_PLAIN_LITERAL_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.RDF_PLAIN_LITERAL.getIRI());
-
     private static final OWLDatatype XSD_STRING_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.XSD_STRING.getIRI());
 
     private static final OWLDatatype XSD_BOOLEAN_DATATYPE = new OWLDatatypeImpl(OWL2Datatype.XSD_BOOLEAN.getIRI());
@@ -223,13 +221,11 @@ public class LiteralLookupTable {
             if (langMarker == LANG_MARKER) {
                 String lang = is.readUTF();
                 byte[] literalBytes = readBytes(is);
-//                return new OWLLiteralImplNoCompression(literalBytes, lang, RDF_PLAIN_LITERAL_DATATYPE);
-                return new OWLLiteralImplNoCompression(new String(literalBytes), lang, RDF_PLAIN_LITERAL_DATATYPE);
+                return df.getOWLLiteral(new String(literalBytes), lang);
             }
             else if (langMarker == NO_LANG_MARKER) {
                 byte[] literalBytes = readBytes(is);
-//                return new OWLLiteralImplNoCompression(literalBytes, null, RDF_PLAIN_LITERAL_DATATYPE);
-                return new OWLLiteralImplNoCompression(new String(literalBytes), null, RDF_PLAIN_LITERAL_DATATYPE);
+                return df.getOWLLiteral(new String(literalBytes), "");
             }
             else {
                 throw new IOException("Unknown lang marker: " + langMarker);
@@ -237,8 +233,7 @@ public class LiteralLookupTable {
         }
         else if(typeMarker == XSD_STRING_MARKER) {
             byte[] literalBytes = readBytes(is);
-//            return new OWLLiteralImplNoCompression(literalBytes, null, XSD_STRING_DATATYPE);
-            return new OWLLiteralImplNoCompression(new String(literalBytes), null, XSD_STRING_DATATYPE);
+            return df.getOWLLiteral(new String(literalBytes));
         }
         else if(typeMarker == XSD_BOOLEAN_MARKER) {
             if(is.readBoolean()) {
@@ -251,7 +246,7 @@ public class LiteralLookupTable {
         else if (typeMarker == OTHER_DATATYPE_MARKER) {
             OWLDatatype datatype = iriLookupTable.readDataypeIRI(is);
             byte[] literalBytes = readBytes(is);
-            return new OWLLiteralImplNoCompression(new String(literalBytes), null, datatype);
+            return df.getOWLLiteral(new String(literalBytes), datatype);
         }
         else {
             throw new RuntimeException("Unknown type marker: " + typeMarker);
