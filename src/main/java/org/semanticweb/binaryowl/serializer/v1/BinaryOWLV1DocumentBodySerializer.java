@@ -8,6 +8,7 @@ import org.semanticweb.binaryowl.BinaryOWLVersion;
 import org.semanticweb.binaryowl.change.OntologyChangeDataList;
 import org.semanticweb.binaryowl.chunk.BinaryOWLMetadataChunk;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
+import org.semanticweb.binaryowl.lookup.AnonymousIndividualLookupTable;
 import org.semanticweb.binaryowl.lookup.IRILookupTable;
 import org.semanticweb.binaryowl.lookup.LiteralLookupTable;
 import org.semanticweb.binaryowl.lookup.LookupTable;
@@ -134,10 +135,10 @@ public class BinaryOWLV1DocumentBodySerializer implements BinaryOWLDocumentBodyS
         iriLookupTable.write(dos);
 
         // Literal Table
-        LiteralLookupTable literalLookupTable = new LiteralLookupTable(doc, iriLookupTable);
+        LiteralLookupTable literalLookupTable = new LiteralLookupTable(doc, iriLookupTable,true);
         literalLookupTable.write(dos);
 
-        LookupTable lookupTable = new LookupTable(iriLookupTable);
+        LookupTable lookupTable = new LookupTable(iriLookupTable,new AnonymousIndividualLookupTable(), literalLookupTable);
 
         BinaryOWLOutputStream lookupTableOutputStream = new BinaryOWLOutputStream(dos, lookupTable);
 
@@ -153,6 +154,8 @@ public class BinaryOWLV1DocumentBodySerializer implements BinaryOWLDocumentBodyS
             lookupTableOutputStream.writeOWLObjects(tmp);
         }
 
+        iriLookupTable.logDeltaCounts();
+        literalLookupTable.logDeltaCounts();
         dos.flush();
     }
 

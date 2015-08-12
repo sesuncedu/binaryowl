@@ -87,11 +87,14 @@ public class BinaryOWLOutputStream extends OutputStream {
     }
 
     public void writeLiteral(OWLLiteral literal) throws IOException {
-        if (version.getVersion() == 1) {
-            LITERAL_SERIALIZER.writeLiteral(this, literal);
-        }
-        else {
-            writeOWLObject(literal);
+        if (true) {
+            lookupTable.getLiteralLookupTable().writeLiteral(dataOutput, literal);
+        } else {
+            if (version.getVersion() == 1) {
+                LITERAL_SERIALIZER.writeLiteral(this, literal);
+            } else {
+                writeOWLObject(literal);
+            }
         }
     }
 

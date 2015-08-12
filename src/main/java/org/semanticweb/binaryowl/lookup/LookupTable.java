@@ -141,13 +141,13 @@ public class LookupTable {
     }
     
 
-//    public void writeLiteral(OWLLiteral literal, DataOutput dos) throws IOException {
-//        literalLookupTable.writeLiteral(dos, literal);
-//    }
-//
-//    public OWLLiteral readLiteral(DataInput dataInput, OWLDataFactory dataFactory) throws IOException {
-//        return
-//    }
+    public void writeLiteral(OWLLiteral literal, DataOutput dos) throws IOException {
+        literalLookupTable.writeLiteral(dos, literal);
+    }
 
+   public OWLLiteral readLiteral(DataInput dataInput, OWLDataFactory dataFactory) throws IOException {
+       // TODO: implement
+       throw new NoSuchMethodError("read Literal method not implemented yet");
+    }
 
 }

@@ -58,11 +58,17 @@ public class AnonymousIndividualLookupTable {
     }
     
     public int getIndex(OWLAnonymousIndividual ind) {
-        Integer i = indexMap.get(ind);
-        if(i == null) {
-            i = indexMap.size();
-            indexMap.put(ind, i);
+        if (true) {
+            // TODO: Implement
+            return -1;
+        } else {
+
+            Integer i = indexMap.get(ind);
+            if (i == null) {
+                i = indexMap.size();
+                indexMap.put(ind, i);
+            }
+            return i;
         }
-        return i;
     }
 }

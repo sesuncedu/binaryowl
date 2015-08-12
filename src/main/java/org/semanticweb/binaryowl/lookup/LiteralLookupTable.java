@@ -39,9 +39,13 @@
 
 package org.semanticweb.binaryowl.lookup;
 
+import com.google.common.base.Charsets;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.util.OWLObjectVisitorAdapter;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import uk.ac.manchester.cs.owl.owlapi.OWLDatatypeImpl;
 import uk.ac.manchester.cs.owl.owlapi.OWLLiteralImplNoCompression;
 
@@ -50,9 +54,12 @@ import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Author: Matthew Horridge<br>
@@ -61,9 +68,8 @@ import java.util.Map;
  * Date: 06/04/2012
  */
 public class LiteralLookupTable {
+   private static Logger logger = LoggerFactory.getLogger(LiteralLookupTable.class);
 
-
-    private boolean useInterning = false;
 
     private static final byte INTERNING_NOT_USED_MARKER = 0;
 
@@ -86,7 +92,10 @@ public class LiteralLookupTable {
 
     private static final byte NO_LANG_MARKER = 0;
 
-    private Map<OWLLiteral, Integer> indexMap = new LinkedHashMap<OWLLiteral, Integer>();
+    private boolean useInterning = false;
+
+    //private Map<OWLLiteral, Integer> indexMap = new LinkedHashMap<OWLLiteral, Integer>();
+    private Map<OWLLiteral, Integer> indexMap = new TreeMap<>();
 
     private List<OWLLiteral> tableList = new ArrayList<OWLLiteral>(0);
 
@@ -104,49 +113,68 @@ public class LiteralLookupTable {
 
     private static final OWLLiteral BOOLEAN_FALSE = new OWLLiteralImplNoCompression("false", null, XSD_BOOLEAN_DATATYPE);
 
+    public LiteralLookupTable(IRILookupTable iriLookupTable, boolean useInterning) {
+        this.iriLookupTable = iriLookupTable;
+        this.useInterning = useInterning;
+    }
+
+    public LiteralLookupTable(boolean useInterning) {
+        this(new IRILookupTable(), useInterning);
+
+    }
+
+    public LiteralLookupTable() {
+        this(false);
+    }
+
+    public LiteralLookupTable(IRILookupTable iriLookupTable, DataInput dis, OWLDataFactory df, boolean useInterning) throws IOException {
+        this(iriLookupTable, useInterning);
+        read(dis, df);
+    }
 
 
-    public LiteralLookupTable(OWLOntologyDocument ontology, IRILookupTable lookupTable) {
+    public LiteralLookupTable(OWLOntologyDocument ontology, IRILookupTable lookupTable, boolean useInterning) {
         this.iriLookupTable = lookupTable;
+        this.useInterning = useInterning;
         if (useInterning) {
             internLiterals(ontology);
         }
     }
 
+
     private void internLiterals(OWLOntologyDocument ontology) {
-        for (OWLAnnotationAssertionAxiom ax : ontology.getAxioms(AxiomType.ANNOTATION_ASSERTION)) {
-            OWLAnnotationValue value = ax.getValue();
-            if (value instanceof OWLLiteral) {
-                int newIndex = indexMap.size();
-                OWLLiteral litValue = (OWLLiteral) value;
-                Integer prev = indexMap.put(litValue, newIndex);
-                if (prev != null) {
-                    indexMap.put(litValue, prev);
-                }
+        InternLiteralsVisitor interner = new InternLiteralsVisitor();
+        for (OWLAnnotation annotation : ontology.getAnnotations()) {
+            annotation.accept(interner);
+        }
+        for (AxiomType<?> axiomType : AxiomType.AXIOM_TYPES) {
+            Set<? extends OWLAxiom> axioms = ontology.getAxioms(axiomType);
+            ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
+            Collections.sort(orderedAxioms);
+            for (OWLAxiom axiom : orderedAxioms) {
+                axiom.accept(interner);
             }
         }
-        for (OWLDataPropertyAssertionAxiom ax : ontology.getAxioms(AxiomType.DATA_PROPERTY_ASSERTION)) {
-            int newIndex = indexMap.size();
-            OWLLiteral object = ax.getObject();
-            Integer prev = indexMap.put(object, newIndex);
-            if (prev != null) {
-                indexMap.put(object, prev);
-            }
+
+        //renumberLiterals();
+
+    }
+
+    private void renumberLiterals() {
+        int n=0;
+        for (Map.Entry<OWLLiteral, Integer> entry : indexMap.entrySet()) {
+            entry.setValue(n++);
         }
     }
 
-    public LiteralLookupTable(IRILookupTable iriLookupTable) {
-        this.iriLookupTable = iriLookupTable;
-    }
-    
-    public LiteralLookupTable(IRILookupTable iriLookupTable, DataInput dis, OWLDataFactory df) throws IOException {
-        this(iriLookupTable);
-        read(dis, df);
+    private void internLiteral(OWLLiteral value) {
+        int newIndex = indexMap.size();
+        Integer prev = indexMap.put(value, newIndex);
+        if (prev != null) {
+            indexMap.put(value, prev);
+        }
     }
 
-    public LiteralLookupTable() {
-        this(new IRILookupTable());
-    }
 
     public OWLLiteral getLiteral(int index) {
         return tableList.get(index);
@@ -169,9 +197,24 @@ public class LiteralLookupTable {
         if(useInterning) {
             os.writeByte(INTERNING_USED_MARKER);
             os.writeInt(indexMap.size());
+
             for (OWLLiteral literal : indexMap.keySet()) {
-                writeRawLiteral(os, literal);
+                iriLookupTable.writeIRI(literal.getDatatype().getIRI(), os);
             }
+            for (OWLLiteral literal : indexMap.keySet()) {
+                if(literal.getDatatype().isRDFPlainLiteral()) {
+                    os.writeUTF(literal.getLang());
+                }
+            }
+
+            for (OWLLiteral literal : indexMap.keySet()) {
+                byte[] utf8Bytes = literal.getLiteral().getBytes(Charsets.UTF_8);
+                os.write(utf8Bytes);
+                os.writeByte(0);
+                //os.writeUTF(literal.getLiteral());
+            }
+
+
         }
         else {
             os.writeByte(INTERNING_NOT_USED_MARKER);
@@ -260,15 +303,61 @@ public class LiteralLookupTable {
 
     }
 
+    private DeltaHistoryTable deltaHistoryTable = new DeltaHistoryTable(4);
+
+    private int indexCount = 0;
+    private int bcdCount = 0;
+    private int scdCount = 0;
+    private int icdCount = 0;
+
+    public void logDeltaCounts() {
+        logger.info("{}",
+                String.format("index count = %,d, bcd = %,d, scd = %,d, icd = %,d",
+                        indexCount, bcdCount, scdCount, icdCount));
+    }
 
     public void writeLiteral(DataOutput os, OWLLiteral literal) throws IOException {
         if(useInterning) {
+            indexCount++;
             int index = getIndex(literal);
             if(index == -1) {
                 os.writeInt(NOT_INDEXED_MARKER);
                 writeRawLiteral(os, literal);
             }
             else {
+                long codedDelta = deltaHistoryTable.getCodedDelta(index);
+                long delta = deltaHistoryTable.decodeDelta(codedDelta);
+                long deltaBaseId = deltaHistoryTable.decodeDeltaBase(codedDelta);
+                byte flagByte = (byte)deltaBaseId;
+
+                byte bcd = (byte) (delta);
+                if (bcd == delta) {
+                    int v = flagByte | 0xc0;
+                    os.writeByte(v);
+                    os.writeByte(bcd);
+                    bcdCount++;
+                    return;
+                }
+
+                short scd = (short) delta;
+                if (scd == delta) {
+                    int v = flagByte | 0x80;
+                    os.writeByte(v);
+                    os.writeShort(scd);
+                    scdCount++;
+                    return;
+                }
+
+                int icd = (int) delta;
+                if (icd == delta) {
+                    int v = flagByte | 0x40;
+                    os.writeByte(v);
+                    os.writeInt((int) delta);
+                    icdCount++;
+                    return;
+                }
+
+                os.writeByte(4);
                 os.writeInt(index);
             }
         }
@@ -333,4 +422,177 @@ public class LiteralLookupTable {
         return bytes;
     }
 
+    private class InternLiteralsVisitor extends OWLObjectVisitorAdapter {
+
+        @Override
+        protected void handleDefault(OWLObject object) {
+            handleAnnotations(object);
+
+            if (object instanceof HasFiller) {
+                HasFiller hasFiller = (HasFiller) object;
+                hasFiller.getFiller().accept(this);
+            }
+        }
+
+        private void handleAnnotations(OWLObject object) {
+            if (object instanceof HasAnnotations) {
+                Collection<OWLAnnotation> annotations = ((HasAnnotations) object).getAnnotations();
+                if (annotations != null && annotations.size() > 0) {
+                    for (OWLAnnotation annotation : annotations) {
+                        annotation.accept(this);
+                    }
+                }
+            }
+
+        }
+
+        @Override
+        public void visit(OWLAnnotation node) {
+            handleAnnotations(node);
+            if (node.getValue() instanceof OWLLiteral) {
+                OWLLiteral value = (OWLLiteral) node.getValue();
+                value.accept(this);
+            }
+        }
+
+        @Override
+        public void visit(OWLLiteral node) {
+            internLiteral(node);
+        }
+
+        @Override
+        public void visit(OWLObjectIntersectionOf ce) {
+            handleDefault(ce);
+            for (OWLClassExpression expression : ce.getOperands()) {
+                expression.accept(this);
+            }
+        }
+
+        @Override
+        public void visit(OWLObjectUnionOf ce) {
+            handleDefault(ce);
+            for (OWLClassExpression expression : ce.getOperands()) {
+                expression.accept(this);
+            }
+        }
+
+        @Override
+        public void visit(OWLFacetRestriction node) {
+            node.getFacetValue().accept(this);
+        }
+
+
+        @Override
+        public void visit(OWLDataComplementOf node) {
+            node.getDataRange().accept(this);
+        }
+
+        @Override
+        public void visit(OWLDataIntersectionOf node) {
+            for (OWLDataRange dataRange : node.getOperands()) {
+                dataRange.accept(this);
+            }
+        }
+
+        @Override
+        public void visit(OWLDataOneOf node) {
+            for (OWLLiteral owlLiteral : node.getValues()) {
+                owlLiteral.accept(this);
+            }
+        }
+
+
+        @Override
+        public void visit(OWLDatatypeRestriction node) {
+            for (OWLFacetRestriction facetRestriction : node.getFacetRestrictions()) {
+                facetRestriction.accept(this);
+            }
+        }
+
+        @Override
+        public void visit(OWLDataUnionOf node) {
+            for (OWLDataRange dataRange : node.getOperands()) {
+                dataRange.accept(this);
+            }
+
+        }
+
+
+        @Override
+        public void visit(OWLAnnotationAssertionAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getValue().accept(this);
+        }
+
+
+        @Override
+        public void visit(SWRLLiteralArgument node) {
+            handleDefault(node);
+            node.getLiteral().accept(this);
+        }
+
+
+        @Override
+        public void visit(SWRLDataRangeAtom node) {
+            handleDefault(node);
+            node.getPredicate().accept(this);
+        }
+
+
+        @Override
+        public void visit(OWLDatatypeDefinitionAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getDataRange().accept(this);
+        }
+
+
+        @Override
+        public void visit(OWLClassAssertionAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getClassExpression().accept(this);
+        }
+
+        @Override
+        public void visit(OWLDataPropertyAssertionAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getObject().accept(this);
+
+        }
+
+        @Override
+        public void visit(OWLDataPropertyDomainAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getDomain().accept(this);
+        }
+
+        @Override
+        public void visit(OWLDataPropertyRangeAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getRange().accept(this);
+        }
+
+        @Override
+        public void visit(OWLHasKeyAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getClassExpression().accept(this);
+        }
+
+        @Override
+        public void visit(OWLNegativeDataPropertyAssertionAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getObject().accept(this);
+        }
+
+        @Override
+        public void visit(OWLObjectPropertyDomainAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getDomain().accept(this);
+        }
+
+        @Override
+        public void visit(OWLObjectPropertyRangeAxiom axiom) {
+            handleDefault(axiom);
+            axiom.getRange().accept(this);
+        }
+    }
 }
