@@ -62,19 +62,51 @@ public class BinaryOWLOutputStream extends OutputStream {
         return version;
     }
 
-    private byte tmp[] = new byte[5];
+    private byte tmp[] = new byte[6];
     public void writeUnsignedInt(int value) throws IOException {
         if(value <0) {
             throw new IllegalArgumentException("expected unsigned int, got " + value);
         }
-        int offset=4;
+        int offset = tmp.length - 1;
         tmp[offset]= (byte) (value & 0x7f);
         value >>= 7;
         while(value != 0) {
             tmp[--offset] = (byte) (0x80 | (value & 0x7f));
             value >>= 7;
         }
-        write(tmp,offset,5-offset);
+        write(tmp, offset, tmp.length - offset);
+    }
+
+    public void writeVarInt(int value) throws IOException {
+        int saveValue = value;
+        int done = 0;
+        int offset = tmp.length - 1;
+        tmp[offset] = (byte) (value & 0x7f);
+        value >>>= 7;
+        while (value != done) {
+            tmp[--offset] = (byte) (0x80 | (value & 0x7f));
+            value >>>= 7;
+        }
+        if (saveValue >= 0) {
+            if ((tmp[offset] & 0x40) != 0) {
+                tmp[--offset] = (byte) 0x80;
+            }
+        } else {
+            if (offset == 1) {
+                if (tmp[offset] == (byte)0x8f) {
+                    offset++;
+                }
+            }
+            while (offset < tmp.length - 1 && tmp[offset] == (byte)0xff) {
+                offset++;
+            }
+
+            if ((tmp[offset] & 0x40) == 0) {
+                tmp[--offset] = -1;
+            }
+        }
+
+        dataOutput.write(tmp, offset, tmp.length - offset);
     }
 
     public void writeOWLObject(OWLObject object) throws IOException {

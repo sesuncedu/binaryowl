@@ -93,6 +93,21 @@ public class BinaryOWLInputStream extends InputStream {
         return tmp;
     }
 
+    public int readVarInt() throws IOException {
+        int tmp=0;
+        byte b = readByte();
+        if((b & 0x40) != 0) {
+            tmp = -1<<7;
+        }
+        while(b <0) {
+            tmp |= b & 0x7f;
+            tmp <<= 7;
+            b = readByte();
+        }
+        tmp |= b;
+        return tmp;
+    }
+
     @SuppressWarnings("unchecked")
     public <O extends OWLObject> O readOWLObject() throws IOException, BinaryOWLParseException  {
         return OWLObjectBinaryType.read(this);

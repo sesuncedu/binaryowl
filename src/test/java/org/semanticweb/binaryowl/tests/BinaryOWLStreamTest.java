@@ -16,6 +16,7 @@ import java.io.EOFException;
 import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class BinaryOWLStreamTest {
@@ -52,6 +53,40 @@ public class BinaryOWLStreamTest {
             bois.readByte();
             fail("should be at EOF");
         } catch (EOFException e) {
+
+        }
+    }
+
+    @Test
+    public void testWriteInt() throws IOException {
+        int batch = 100_000;
+        for (int i = -10_000_000; i <= 10_000_000; i += batch) {
+            logger.info("i = {}", String.format("%,d", i));
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(batch * 6);
+            BinaryOWLOutputStream bowls = new BinaryOWLOutputStream(bos, BinaryOWLVersion.getVersion(1));
+            double start = System.currentTimeMillis();
+            for (int j = i; j < i + batch; j++) {
+                bowls.writeVarInt(j);
+            }
+            double end = System.currentTimeMillis();
+            double delta = end - start;
+            delta /= 1000;
+            byte[] buf = bos.toByteArray();
+            logger.info("encoded {} values in {}: buf length is {}", batch, String.format("%,.3fs", delta), String.format("%,d", buf.length));
+            ByteArrayInputStream bais = new ByteArrayInputStream(buf);
+            BinaryOWLInputStream bois = new BinaryOWLInputStream(bais, new OWLDataFactoryImpl(), BinaryOWLVersion.getVersion(1));
+            logger.info("start decode");
+            start = System.currentTimeMillis();
+            for (int j = i; j < i + batch; j++) {
+                int val = bois.readVarInt();
+                assertTrue("value mismatch", j == val);
+            }
+            end = System.currentTimeMillis();
+            delta = end - start;
+            delta /= 1000;
+            logger.info("decoded {} values in {}",batch, String.format("%,.3fs", delta));
+            logger.info("decode speed: {} values per second", String.format("%,.0f", batch / delta));
+
 
         }
     }
