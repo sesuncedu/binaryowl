@@ -80,6 +80,19 @@ public class BinaryOWLInputStream extends InputStream {
         return dataFactory;
     }
 
+
+    public int readUnsignedInt() throws IOException {
+        int tmp=0;
+        byte b = readByte();
+        while(b <0) {
+            tmp |= b & 0x7f;
+            tmp <<= 7;
+            b = readByte();
+        }
+        tmp |= b;
+        return tmp;
+    }
+
     @SuppressWarnings("unchecked")
     public <O extends OWLObject> O readOWLObject() throws IOException, BinaryOWLParseException  {
         return OWLObjectBinaryType.read(this);

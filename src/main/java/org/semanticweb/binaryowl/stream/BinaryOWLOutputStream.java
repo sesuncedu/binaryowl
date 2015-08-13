@@ -1,15 +1,14 @@
 package org.semanticweb.binaryowl.stream;
 
 import org.semanticweb.binaryowl.BinaryOWLVersion;
-import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryType;
 import org.semanticweb.binaryowl.lookup.LookupTable;
+import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryType;
 import org.semanticweb.binaryowl.owlobject.serializer.OWLLiteralSerializer;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnonymousIndividual;
 import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLObject;
 
-import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -25,7 +24,7 @@ import static org.semanticweb.binaryowl.stream.BinaryOWLStreamUtil.writeCollecti
  */
 public class BinaryOWLOutputStream extends OutputStream {
 
-    private DataOutput dataOutput;
+    private DataOutputStream dataOutput;
     
     private LookupTable lookupTable;
 
@@ -37,7 +36,7 @@ public class BinaryOWLOutputStream extends OutputStream {
 
     public BinaryOWLOutputStream(OutputStream dataOutput, BinaryOWLVersion version) {
         if(dataOutput instanceof DataOutputStream) {
-            this.dataOutput = (DataOutput) dataOutput;
+            this.dataOutput = (DataOutputStream) dataOutput;
         }
         else {
             this.dataOutput = new DataOutputStream(dataOutput);
@@ -47,13 +46,13 @@ public class BinaryOWLOutputStream extends OutputStream {
         this.setTransformer = new PassThroughSetTransformer();
     }
 
-    public BinaryOWLOutputStream(DataOutput dataOutput, LookupTable lookupTable) {
+    public BinaryOWLOutputStream(DataOutputStream dataOutput, LookupTable lookupTable) {
         this.dataOutput = dataOutput;
         this.lookupTable = lookupTable;
         this.setTransformer = new PassThroughSetTransformer();
     }
 
-    public BinaryOWLOutputStream(DataOutput dataOutput, SetTransformer setTransformer) {
+    public BinaryOWLOutputStream(DataOutputStream dataOutput, SetTransformer setTransformer) {
         this.dataOutput = dataOutput;
         this.setTransformer = setTransformer;
         this.lookupTable = LookupTable.emptyLookupTable();
@@ -61,6 +60,21 @@ public class BinaryOWLOutputStream extends OutputStream {
 
     public BinaryOWLVersion getVersion() {
         return version;
+    }
+
+    private byte tmp[] = new byte[5];
+    public void writeUnsignedInt(int value) throws IOException {
+        if(value <0) {
+            throw new IllegalArgumentException("expected unsigned int, got " + value);
+        }
+        int offset=4;
+        tmp[offset]= (byte) (value & 0x7f);
+        value >>= 7;
+        while(value != 0) {
+            tmp[--offset] = (byte) (0x80 | (value & 0x7f));
+            value >>= 7;
+        }
+        write(tmp,offset,5-offset);
     }
 
     public void writeOWLObject(OWLObject object) throws IOException {
@@ -390,6 +404,9 @@ public class BinaryOWLOutputStream extends OutputStream {
         dataOutput.write(bytes);
     }
 
+    public int size() {
+        return dataOutput.size();
+    }
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
