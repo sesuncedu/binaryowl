@@ -16,7 +16,8 @@ public class DeltaHistoryTable {
     private final int idHistory[];
     private final int baseIdMask;
     TLongLongHashMap countMap = new TLongLongHashMap();
-    DeltaHistoryTable(int baseIdWidth) {
+
+   public  DeltaHistoryTable(int baseIdWidth) {
 
         this.baseIdWidth = baseIdWidth;
         idHistory = new int[1 << baseIdWidth];
