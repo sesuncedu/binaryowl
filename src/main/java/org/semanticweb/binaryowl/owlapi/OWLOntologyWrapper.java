@@ -68,4 +68,7 @@ public class OWLOntologyWrapper implements OWLOntologyDocument {
     public Set<OWLDatatype> getDatatypesInSignature() {
         return delegate.getDatatypesInSignature();
     }
+    public OWLOntology getOntology() {
+        return delegate;
+    }
 }

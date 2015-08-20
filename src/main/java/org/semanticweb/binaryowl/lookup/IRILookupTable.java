@@ -41,6 +41,7 @@ package org.semanticweb.binaryowl.lookup;
 
 import com.google.common.base.Charsets;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
+import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLObjectVisitorAdapter;
 import org.semanticweb.owlapi.util.OWLObjectWalker;
@@ -56,15 +57,10 @@ import uk.ac.manchester.cs.owl.owlapi.OWLObjectPropertyImpl;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.AbstractSet;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.io.PrintWriter;
+import java.util.*;
+
+import static org.semanticweb.owlapi.util.StructureWalker.AnnotationWalkingControl.WALK_ANNOTATIONS;
 
 /**
  * Author: Matthew Horridge<br>
@@ -96,6 +92,16 @@ public class IRILookupTable {
     
     private OWLDatatype datatypeTable [];
 
+    public int compare(IRI o1, IRI o2) {
+        int i1 = getIndex(o1);
+        int i2 = getIndex(o2);
+        if(i1 <0 || i2 < 0) {
+            return o1.compareTo(o2);
+        }  else {
+            return i1 - i2;
+        }
+    }
+
     private static class PseudoSet<O> extends AbstractSet<O> {
         private ArrayList<O> delegate;
 
@@ -116,7 +122,7 @@ public class IRILookupTable {
 
 
     private class InterningObjectVisitor extends OWLObjectVisitorAdapter {
-        @Override
+       /* @Override
         public void visit(OWLClass ce) {
             processEntity(ce);
         }
@@ -145,39 +151,60 @@ public class IRILookupTable {
         public void visit(OWLNamedIndividual individual) {
             processEntity(individual);
         }
+        */
 
+        @Override
+        public void visit(IRI iri) {
+            processIRI(iri);
+        }
     }
+
+    private boolean shouldSortIRITable = false;
     public IRILookupTable(OWLOntologyDocument ontology) {
-        //iri2IndexMap = new LinkedHashMap<>();
-        iri2IndexMap = new TreeMap<>();
+        if (shouldSortIRITable) {
+            iri2IndexMap = new TreeMap<>();
+        } else {
+            iri2IndexMap = new LinkedHashMap<>();
+        }
+
+        processSignatureSubset(ontology.getAnnotationPropertiesInSignature());
+        processSignatureSubset(ontology.getDataPropertiesInSignature());
+        processSignatureSubset(ontology.getObjectPropertiesInSignature());
+        processSignatureSubset(ontology.getDatatypesInSignature());
+
+        RightToLeftEntityOrderer order = new RightToLeftEntityOrderer(ontology.getOntology());
+        Set<RightToLeftEntityOrderer.Node> entityOrder = order.getNodes();
+        for (RightToLeftEntityOrderer.Node node : entityOrder) {
+            processEntity(node.getEntity());
+        }
+
+
         InterningObjectVisitor interner = new InterningObjectVisitor();
 
+        Set<? extends OWLObject> annotations = ontology.getAnnotations();
+        OWLObjectWalker<? extends OWLObject> walker = new OWLObjectWalker<>(annotations, WALK_ANNOTATIONS);
+        walker.walkStructure(interner);
+        AxiomSorter comparator = new AxiomSorter();
+        processAxiomsForAxiomType(ontology, interner, AxiomType.ANNOTATION_ASSERTION, comparator);
+
         for (AxiomType<?> axiomType : AxiomType.AXIOM_TYPES) {
-            if (axiomType != AxiomType.DECLARATION) {
-                processAxiomsForAxiomType(ontology, interner, axiomType);
+            if (axiomType != AxiomType.DECLARATION && axiomType != AxiomType.ANNOTATION_ASSERTION) {
+                processAxiomsForAxiomType(ontology, interner, axiomType, comparator);
             }
         }
-        processAxiomsForAxiomType(ontology, interner, AxiomType.DECLARATION);
-        Set<? extends OWLObject> annotations = ontology.getAnnotations();
-        OWLObjectWalker<? extends OWLObject> walker = new OWLObjectWalker<>(annotations);
-        walker.walkStructure(interner);
+        processAxiomsForAxiomType(ontology, interner, AxiomType.DECLARATION, comparator);
+        if (shouldSortIRITable) {
+            renumberIRIMappings();
+        }
+        deltaHistoryTable = new DeltaHistoryTable(6, iri2IndexMap.size(),0,127);
 
-        renumberIRIMappings();
-
-//        processSignatureSubset(ontology.getClassesInSignature());
-//        processSignatureSubset(ontology.getObjectPropertiesInSignature());
-//        processSignatureSubset(ontology.getDataPropertiesInSignature());
-//        processSignatureSubset(ontology.getAnnotationPropertiesInSignature());
-//        processSignatureSubset(ontology.getIndividualsInSignature());
-//        processSignatureSubset(ontology.getDatatypesInSignature());
     }
 
-    private void processAxiomsForAxiomType(OWLOntologyDocument ontology, InterningObjectVisitor interner, AxiomType<?> axiomType) {
-        Set<? extends OWLObject> axioms = ontology.getAxioms(axiomType);
-        ArrayList<OWLObject> orderedAxioms = new ArrayList<>(axioms);
-        Collections.sort(orderedAxioms);
-        PseudoSet<OWLObject> pseudoSet = new PseudoSet<>(orderedAxioms);
-        OWLObjectWalker<OWLObject> walker = new OWLObjectWalker<>(pseudoSet);
+    private void processAxiomsForAxiomType(OWLOntologyDocument ontology, InterningObjectVisitor interner, AxiomType<?> axiomType, Comparator<OWLAxiom> comparator) {
+        Set<? extends OWLAxiom> axioms = ontology.getAxioms(axiomType);
+        ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
+        Collections.sort(orderedAxioms, comparator);
+        OWLObjectWalker<? extends OWLAxiom> walker = new OWLObjectWalker<>(orderedAxioms,WALK_ANNOTATIONS);
         walker.walkStructure(interner);
     }
 
@@ -193,7 +220,9 @@ public class IRILookupTable {
     }
 
     private void processSignatureSubset(Set<? extends OWLEntity> signature) {
-        for (OWLEntity entity : signature) {
+        ArrayList<? extends OWLEntity> list = new ArrayList<>(signature);
+        Collections.sort(list);
+        for (OWLEntity entity : list) {
             processEntity(entity);
         }
     }
@@ -226,7 +255,7 @@ public class IRILookupTable {
         return iriTable [index];
     }
 
-    private int getIndex(IRI iri) {
+    public int getIndex(IRI iri) {
         Integer i = iri2IndexMap.get(iri);
         if (i == null) {
             return -1;
@@ -246,14 +275,15 @@ public class IRILookupTable {
             int si = startIndex.get(iri.getNamespace());
             os.writeInt(si);
         }
-
+        PrintWriter pr = new PrintWriter("/tmp/iri-frags.txt");
         for (IRI iri : iri2IndexMap.keySet()) {
             String fragment = iri.getFragment();
+            pr.println(fragment);
             byte bytes[] = fragment.getBytes(Charsets.UTF_8);
             os.write(bytes);
             os.writeByte(0);
         }
-
+        pr.close();
     }
 
     private void renumberIRIMappings() {
@@ -345,19 +375,26 @@ public class IRILookupTable {
         return deltaHistoryTable;
     }
 
-    private DeltaHistoryTable deltaHistoryTable = new DeltaHistoryTable(2);
-
+    private DeltaHistoryTable deltaHistoryTable;
     private int indexCount = 0;
     private int bcdCount = 0;
     private int scdCount = 0;
     private int icdCount = 0;
 
+    public void resetCounts() {
+        indexCount = 0;
+        bcdCount = 0;
+        scdCount = 0;
+        icdCount = 0;
+
+    }
     public void logDeltaCounts() {
         logger.info("{}",
                 String.format("index count = %,d, bcd = %,d, scd = %,d, icd = %,d",
                         indexCount, bcdCount, scdCount, icdCount));
     }
-    private void writeIndex(int i, DataOutput dos) throws IOException {
+
+    private void writeIndex(int i, BinaryOWLOutputStream dos) throws IOException {
         indexCount++;
         if(i == NOT_INDEXED_MARKER) {
             dos.writeByte(i);
@@ -371,9 +408,16 @@ public class IRILookupTable {
         long delta = deltaHistoryTable.decodeDelta(codedDelta);
         long deltaBaseId = deltaHistoryTable.decodeDeltaBase(codedDelta);
         byte flagByte = (byte) deltaBaseId;
+
+        if (false) {
+            dos.writeByte((byte) deltaBaseId);
+            dos.writeVarInt((int)delta);
+            return;
+        }
+
         byte bcd = (byte) (delta);
         if (bcd == delta) {
-            int v = flagByte | 0xc0;
+            int v = flagByte | 0x00;
             dos.writeByte(v);
             dos.writeByte(bcd);
             bcdCount++;
@@ -382,7 +426,7 @@ public class IRILookupTable {
 
         short scd = (short) delta;
         if (scd == delta) {
-            int v = flagByte | 0x80;
+            int v = flagByte | 0x40;
             dos.writeByte(v);
             dos.writeShort(scd);
             scdCount++;
@@ -391,7 +435,7 @@ public class IRILookupTable {
 
         int icd = (int) delta;
         if (icd == delta) {
-            int v = flagByte | 0x40;
+            int v = flagByte | 0x80;
             dos.writeByte(v);
             dos.writeInt(icd);
             icdCount++;
@@ -531,8 +575,8 @@ public class IRILookupTable {
         }
         return ind;
     }
-    
-    public void writeIRI(IRI iri, DataOutput dataOutput) throws IOException {
+
+    public void writeIRI(IRI iri, BinaryOWLOutputStream dataOutput) throws IOException {
         int index = getIndex(iri);
         if(index == -1) {
             writeIndex(NOT_INDEXED_MARKER, dataOutput);

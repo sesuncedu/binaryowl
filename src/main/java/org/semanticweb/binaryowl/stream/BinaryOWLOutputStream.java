@@ -129,12 +129,12 @@ public class BinaryOWLOutputStream extends OutputStream {
     }
 
     public void writeIRI(IRI iri) throws IOException {
-        lookupTable.writeIRI(iri, dataOutput);
+        lookupTable.writeIRI(iri, this);
     }
 
     public void writeLiteral(OWLLiteral literal) throws IOException {
         if (true) {
-            lookupTable.getLiteralLookupTable().writeLiteral(dataOutput, literal);
+            lookupTable.getLiteralLookupTable().writeLiteral(this, literal);
         } else {
             if (version.getVersion() == 1) {
                 LITERAL_SERIALIZER.writeLiteral(this, literal);

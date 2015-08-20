@@ -14,20 +14,40 @@ public class DeltaHistoryTable {
     private static Logger logger = LoggerFactory.getLogger(DeltaHistoryTable.class);
     private final int baseIdWidth;
     private final int idHistory[];
+    private final long lastUsed[];
+    private long now = 0;
+    private final int positiveClose;
+    private final int negativeClose;
     private final int baseIdMask;
-    TLongLongHashMap countMap = new TLongLongHashMap();
+    TLongLongHashMap positiveDeltaCountMap = new TLongLongHashMap();
+    TLongLongHashMap negativeDeltacountMap = new TLongLongHashMap();
 
-   public  DeltaHistoryTable(int baseIdWidth) {
+    public DeltaHistoryTable(int baseIdWidth, int maxValue) {
+        this(baseIdWidth, maxValue, -defaultClose(baseIdWidth),defaultClose(baseIdWidth));
+    }
+
+    public DeltaHistoryTable(int baseIdWidth, int maxValue, int negativeClose,int positiveClose) {
 
         this.baseIdWidth = baseIdWidth;
-        idHistory = new int[1 << baseIdWidth];
-        baseIdMask = (1 << baseIdWidth) -1;
-        int initSlice = 1 <<(31 - baseIdWidth);
+        int size = 1 << baseIdWidth;
+        idHistory = new int[size];
+        lastUsed = new long[size];
+        baseIdMask = (size) - 1;
+        int initSlice = maxValue / size;
         int initValue=0;
+
         for(int i=0;i<idHistory.length;i++) {
             idHistory[i] = initValue;
             initValue += initSlice;
+            //idHistory[i] = 0;
         }
+        this.positiveClose = positiveClose;
+        this.negativeClose= negativeClose;
+
+    }
+
+    private static int defaultClose(int baseIdWidth) {
+        return 1 << Math.max(0, 12 - baseIdWidth);
     }
 
 
@@ -37,7 +57,11 @@ public class DeltaHistoryTable {
         int delta = id - idHistory[minDeltaIndex];
         long codedDelta = delta << baseIdWidth | minDeltaIndex;
         updateTable(id, minDeltaIndex, delta);
-        countMap.adjustOrPutValue(codedDelta,1,1);
+        if (delta >= 0) {
+            positiveDeltaCountMap.adjustOrPutValue(delta, 1, 1);
+        } else {
+            negativeDeltacountMap.adjustOrPutValue(-delta, 1, 1);
+        }
         logger.debug("After: History table = {}",this);
         logger.debug("id = {},codedDelta={} (delta={},baseId={})",id,codedDelta, delta, minDeltaIndex);
 
@@ -61,45 +85,122 @@ public class DeltaHistoryTable {
     }
 
     private void updateTable(int id, int minDeltaIndex, int delta) {
-       if(delta == 0) {
+        if (delta == 0) {
+            handleHit(id, delta, minDeltaIndex);
+        } else if (delta >=negativeClose && delta <= positiveClose) {
+            handleClose(id, delta, minDeltaIndex);
+        } else {
+            handleMiss(id,delta,minDeltaIndex);
+        }
+    }
+
+    private void handleHit(int id, int delta, int hitIndex) {
+        lastUsed[hitIndex] = ++now;
+    }
+
+    private void handleClose(int id, int delta, int minDeltaIndex) {
+        if (delta != 0) {
+            logger.debug("pseudo hit for {} - {}:{}", id, minDeltaIndex, delta);
+        }
+        idHistory[minDeltaIndex] = id;
+        lastUsed[minDeltaIndex] = ++now;
+    }
+
+
+    private void handleMiss( int nonMatchId, int delta,int minDeltaIndex) {
+        long lruTime = Long.MAX_VALUE;
+        int lruIndex = -1;
+        for (int i = 0; i < idHistory.length; i++) {
+            if (lastUsed[i] < lruTime) {
+                lruTime = lastUsed[i];
+                lruIndex = i;
+            }
+        }
+        idHistory[lruIndex] = nonMatchId;
+        lastUsed[lruIndex] = ++now;
+    }
+
+    private void shuffleHit(int id, int delta, int minDeltaIndex) {
            for(int i = minDeltaIndex; i >0;i--) {
-               if(i == idHistory.length) {
-                   logger.error("too high:)");
-               }
-               if(i == 0) {
-                   logger.error("too low");
-               }
                int tmp = idHistory[i-1];
                idHistory[i-1] = idHistory[i];
                idHistory[i] = tmp;
            }
-       } else {
+    }
+
+    private void shuffleMiss(int id) {
            System.arraycopy(idHistory,0,idHistory,1,idHistory.length-1);
            idHistory[0] = id;
        }
+
+    public void resetCounts() {
+        positiveDeltaCountMap = new TLongLongHashMap();
+        negativeDeltacountMap = new TLongLongHashMap();
     }
 
     public void dumpCounts() {
+        long total=0;
+        logger.info("Table size: {}, near-miss = {}  - 0 -  {} ",idHistory.length,negativeClose,positiveClose);
+        logger.info("Negative Deltas");
+        total += dumpCounts(negativeDeltacountMap, true);
+        logger.info("Positive Deltas");
+        total += dumpCounts(positiveDeltaCountMap, false);
+        logger.info("Grand total: {}", pp(total));
+    }
+
+    private long dumpCounts(TLongLongHashMap countMap, boolean reverse) {
         long keyArray[] = countMap.keys(new long[countMap.size()]);
         Arrays.sort(keyArray);
+        long firstOnes[] = new long[64];
         int smalls=0;
         int bytes =0;
-        int total =0;
+        long total =0;
         for(int i=0; i < keyArray.length;i++) {
             long key = keyArray[i];
+            int firstOne = 64 - Long.numberOfLeadingZeros(key);
             long count = countMap.get(key);
+            firstOnes[firstOne] += count;
             total += count;
-            if(key == (key & 0xff)) {
-                bytes+= count;
-            }
-            if(count >3) {
-                logger.info("key: {}, count: {}", key, count);
-            } else {
-                smalls++;
-            }
         }
-        logger.info("keys: {}, total count: {}",keyArray.length,total);
-        logger.info("bytes {}, longtail {} <3 uses ",bytes,smalls);
+
+        long cumSums[] = new long[64];
+        int cumSum=0;
+        for(int i= 0; i < 64;i++)  {
+           cumSum += firstOnes[i];
+            cumSums[i] = cumSum;
+        }
+        if (!reverse) {
+            for (int i = 0; i < 64; i++) {
+                long firstOne = firstOnes[i];
+                if (firstOne != 0) {
+                    logDelta(i, firstOne,cumSums[i],total);
+                }
+            }
+        } else {
+            for (int i = 63; i >= 0; i--) {
+                long firstOne = firstOnes[i];
+                cumSum += firstOne;
+                if (firstOne != 0) {
+                    logDelta(i, firstOne,cumSums[i],total);
+                }
+            }
+
+        }
+        logger.info(" Sub-total: {}", pp(total));
+        return total;
+    }
+
+    private void logDelta(int i, long firstOne, long cumSum, long total) {
+        int lower = i == 0 ? 0 : 1 << i - 1;
+        int upper = 1 << i;
+        logger.info("\t[{}, {}): {} ({} / {} - {})", lower, upper, pp(firstOne),pp(cumSum),pp(total),ppPercent(cumSum,total));
+    }
+
+    private String pp(long firstOne) {
+        return String.format("%,d", firstOne);
+    }
+    private String ppPercent(double num, double denom) {
+        return String.format("%,.2f%%", (num * 100) / denom);
     }
 
     @Override

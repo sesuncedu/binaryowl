@@ -41,6 +41,7 @@ package org.semanticweb.binaryowl.lookup;
 
 import com.google.common.base.Charsets;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
+import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLObjectVisitorAdapter;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
@@ -50,16 +51,9 @@ import uk.ac.manchester.cs.owl.owlapi.OWLDatatypeImpl;
 import uk.ac.manchester.cs.owl.owlapi.OWLLiteralImplNoCompression;
 
 import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.io.PrintWriter;
+import java.util.*;
 
 /**
  * Author: Matthew Horridge<br>
@@ -95,7 +89,7 @@ public class LiteralLookupTable {
     private boolean useInterning = false;
 
     //private Map<OWLLiteral, Integer> indexMap = new LinkedHashMap<OWLLiteral, Integer>();
-    private Map<OWLLiteral, Integer> indexMap = new TreeMap<>();
+    private Map<OWLLiteral, Integer> indexMap;// = new TreeMap<>();
 
     private List<OWLLiteral> tableList = new ArrayList<OWLLiteral>(0);
 
@@ -141,23 +135,47 @@ public class LiteralLookupTable {
         }
     }
 
-
+    public int compareLiteral(OWLLiteral o1, OWLLiteral o2) {
+        int i1 = getIndex(o1);
+        int i2 = getIndex(o2);
+        if(i1 < 0 || i2 < 0) {
+            return o1.compareTo(o2);
+        }  else {
+            return i1 - i2;
+        }
+    }
+    private boolean shouldSortLiterals = false;
     private void internLiterals(OWLOntologyDocument ontology) {
+        if (shouldSortLiterals) {
+            indexMap = new TreeMap<>();
+        } else {
+            indexMap = new LinkedHashMap<>();
+        }
         InternLiteralsVisitor interner = new InternLiteralsVisitor();
         for (OWLAnnotation annotation : ontology.getAnnotations()) {
             annotation.accept(interner);
         }
+        Comparator<OWLAxiom> subCompare = new AxiomSorter(new Comparator<IRI>() {
+            @Override
+            public int compare(IRI o1, IRI o2) {
+                return iriLookupTable.compare(o1,o2);
+            }
+        });
+
         for (AxiomType<?> axiomType : AxiomType.AXIOM_TYPES) {
             Set<? extends OWLAxiom> axioms = ontology.getAxioms(axiomType);
             ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
-            Collections.sort(orderedAxioms);
+            Collections.sort(orderedAxioms,subCompare);
             for (OWLAxiom axiom : orderedAxioms) {
                 axiom.accept(interner);
             }
         }
 
-        //renumberLiterals();
-
+        if (shouldSortLiterals) {
+            //logger.warn("not renumbering literal ids");
+            renumberLiterals();
+        }
+        deltaHistoryTable = new DeltaHistoryTable(6, indexMap.size(),-1,1024);
     }
 
     private void renumberLiterals() {
@@ -193,26 +211,42 @@ public class LiteralLookupTable {
         }
     }
 
-    public void write(DataOutputStream os) throws IOException {
+    public void write(BinaryOWLOutputStream os) throws IOException {
         if(useInterning) {
             os.writeByte(INTERNING_USED_MARKER);
             os.writeInt(indexMap.size());
+            logger.info("datatype table start at {}",os.size());
 
             for (OWLLiteral literal : indexMap.keySet()) {
                 iriLookupTable.writeIRI(literal.getDatatype().getIRI(), os);
             }
+            logger.info("datatype  table done at {}, langtags start",os.size());
             for (OWLLiteral literal : indexMap.keySet()) {
                 if(literal.getDatatype().isRDFPlainLiteral()) {
                     os.writeUTF(literal.getLang());
                 }
             }
+            logger.info("langtag  table done at {}, strings start",os.size());
 
+          /*  DeltaHistoryTable indexDelta = new DeltaHistoryTable(6,indexMap.size());
+            for (int index : indexMap.values()) {
+                long codedDelta = indexDelta.getCodedDelta(index);
+                int deltaBase = (int) indexDelta.decodeDeltaBase(codedDelta);
+                os.writeVarInt(deltaBase);
+                int delta = (int) indexDelta.decodeDelta(codedDelta);
+                os.writeVarInt(delta);
+            }
+          */
+            PrintWriter pw = new PrintWriter("/tmp/literals.txt");
             for (OWLLiteral literal : indexMap.keySet()) {
                 byte[] utf8Bytes = literal.getLiteral().getBytes(Charsets.UTF_8);
                 os.write(utf8Bytes);
-                os.writeByte(0);
+                os.writeByte('\n');
                 //os.writeUTF(literal.getLiteral());
+                pw.format("%s\n",literal.getLiteral());
             }
+            pw.close();
+            logger.info("strings done at {}",os.size());
 
 
         }
@@ -303,7 +337,7 @@ public class LiteralLookupTable {
 
     }
 
-    private DeltaHistoryTable deltaHistoryTable = new DeltaHistoryTable(4);
+    private DeltaHistoryTable deltaHistoryTable;
 
     private int indexCount = 0;
     private int bcdCount = 0;
@@ -316,58 +350,62 @@ public class LiteralLookupTable {
                         indexCount, bcdCount, scdCount, icdCount));
     }
 
-    public void writeLiteral(DataOutput os, OWLLiteral literal) throws IOException {
+    public void writeLiteral(BinaryOWLOutputStream dos, OWLLiteral literal) throws IOException {
         if(useInterning) {
             indexCount++;
             int index = getIndex(literal);
             if(index == -1) {
-                os.writeInt(NOT_INDEXED_MARKER);
-                writeRawLiteral(os, literal);
+                dos.writeInt(NOT_INDEXED_MARKER);
+                writeRawLiteral(dos, literal);
             }
             else {
                 long codedDelta = deltaHistoryTable.getCodedDelta(index);
                 long delta = deltaHistoryTable.decodeDelta(codedDelta);
                 long deltaBaseId = deltaHistoryTable.decodeDeltaBase(codedDelta);
                 byte flagByte = (byte)deltaBaseId;
-
+                if (false) {
+                    dos.writeVarInt((int)codedDelta);
+                    return;
+                }
                 byte bcd = (byte) (delta);
                 if (bcd == delta) {
-                    int v = flagByte | 0xc0;
-                    os.writeByte(v);
-                    os.writeByte(bcd);
+                    int v = flagByte | 0x00;
+                    dos.writeByte(v);
+                    dos.writeByte(bcd);
                     bcdCount++;
                     return;
                 }
 
                 short scd = (short) delta;
                 if (scd == delta) {
-                    int v = flagByte | 0x80;
-                    os.writeByte(v);
-                    os.writeShort(scd);
+                    int v = flagByte | 0x40;
+                    dos.writeByte(v);
+                    dos.writeShort(scd);
                     scdCount++;
                     return;
                 }
 
                 int icd = (int) delta;
                 if (icd == delta) {
-                    int v = flagByte | 0x40;
-                    os.writeByte(v);
-                    os.writeInt((int) delta);
+                    int v = flagByte | 0x80;
+                    dos.writeByte(v);
+                    dos.writeInt(icd);
                     icdCount++;
                     return;
                 }
 
-                os.writeByte(4);
-                os.writeInt(index);
+
+                dos.writeByte(4);
+                dos.writeInt(index);
             }
         }
         else {
-            writeRawLiteral(os, literal);
+            writeRawLiteral(dos, literal);
         }
 
     }
 
-    private void writeRawLiteral(DataOutput os, OWLLiteral literal) throws IOException {
+    private void writeRawLiteral(BinaryOWLOutputStream os, OWLLiteral literal) throws IOException {
         if(literal.getDatatype().equals(XSD_BOOLEAN_DATATYPE)) {
             os.write(XSD_BOOLEAN_MARKER);
             os.writeBoolean(literal.parseBoolean());
@@ -404,12 +442,12 @@ public class LiteralLookupTable {
 
     }
 
-    private void writeString(String s, DataOutput os) throws IOException {
+    private void writeString(String s, BinaryOWLOutputStream os) throws IOException {
         os.writeUTF(s);
     }
 
 
-    private void writeBytes(byte[] bytes, DataOutput os) throws IOException {
+    private void writeBytes(byte[] bytes, BinaryOWLOutputStream os) throws IOException {
         os.writeShort(bytes.length);
         os.write(bytes);
     }
@@ -420,6 +458,10 @@ public class LiteralLookupTable {
         byte[] bytes = new byte[length];
         is.readFully(bytes);
         return bytes;
+    }
+
+    public DeltaHistoryTable getDeltaHistoryTable() {
+        return deltaHistoryTable;
     }
 
     private class InternLiteralsVisitor extends OWLObjectVisitorAdapter {

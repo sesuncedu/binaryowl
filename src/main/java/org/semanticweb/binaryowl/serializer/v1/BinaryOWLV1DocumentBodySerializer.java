@@ -9,9 +9,11 @@ import org.semanticweb.binaryowl.change.OntologyChangeDataList;
 import org.semanticweb.binaryowl.chunk.BinaryOWLMetadataChunk;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
 import org.semanticweb.binaryowl.lookup.AnonymousIndividualLookupTable;
+import org.semanticweb.binaryowl.lookup.AxiomSorter;
 import org.semanticweb.binaryowl.lookup.IRILookupTable;
 import org.semanticweb.binaryowl.lookup.LiteralLookupTable;
 import org.semanticweb.binaryowl.lookup.LookupTable;
+import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryTypeSelector;
 import org.semanticweb.binaryowl.owlobject.serializer.BinaryOWLImportsDeclarationSet;
 import org.semanticweb.binaryowl.owlobject.serializer.BinaryOWLOntologyID;
 import org.semanticweb.binaryowl.serializer.BinaryOWLDocumentBodySerializer;
@@ -27,10 +29,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * Author: Matthew Horridge<br>
@@ -130,12 +130,16 @@ public class BinaryOWLV1DocumentBodySerializer implements BinaryOWLDocumentBodyS
         importsDeclarationSet.write(nonLookupTableOutputStream);
 
         // IRI Table
-        IRILookupTable iriLookupTable = new IRILookupTable(doc);
+        final IRILookupTable iriLookupTable = new IRILookupTable(doc);
+        logger.info("iri table starts at {}", String.format("%,d", nonLookupTableOutputStream.size()));
         iriLookupTable.write(dos);
+        logger.info("iri table done at {}, literal table starts", String.format("%,d", nonLookupTableOutputStream.size()));
+
 
         // Literal Table
         final LiteralLookupTable literalLookupTable = new LiteralLookupTable(doc, iriLookupTable, true);
-        literalLookupTable.write(dos);
+        literalLookupTable.write(nonLookupTableOutputStream);
+        logger.info("literal table done at {}, rest of stuff starts", String.format("%,d", nonLookupTableOutputStream.size()));
 
         LookupTable lookupTable = new LookupTable(iriLookupTable,new AnonymousIndividualLookupTable(), literalLookupTable);
 
@@ -144,94 +148,88 @@ public class BinaryOWLV1DocumentBodySerializer implements BinaryOWLDocumentBodyS
         // Ontology Annotations
         lookupTableOutputStream.writeOWLObjects(doc.getAnnotations());
 
-        Comparator<OWLAxiom> subCompare = new Comparator<OWLAxiom>() {
+        Comparator<IRI> iriComparator = new Comparator<IRI>() {
             @Override
-            public int compare(OWLAxiom o1, OWLAxiom o2) {
-                if (o1 instanceof OWLSubClassOfAxiom && o2 instanceof OWLSubClassOfAxiom) {
-                    return compareSubClassAxioms((OWLSubClassOfAxiom) o1, (OWLSubClassOfAxiom) o2);
-
-                } else if (o1 instanceof OWLAnnotationAssertionAxiom && o2 instanceof OWLAnnotationAssertionAxiom) {
-                    return compareAnnotationAssertionAxioms((OWLAnnotationAssertionAxiom) o1, (OWLAnnotationAssertionAxiom) o2);
-
-                } else {
-                    return o1.compareTo(o2);
-                }
-            }
-
-            private int compareAnnotationAssertionAxioms(OWLAnnotationAssertionAxiom a1, OWLAnnotationAssertionAxiom a2) {
-                int cmp;
-                if (a1.getValue() instanceof OWLLiteral && a2.getValue() instanceof OWLLiteral) {
-                    cmp = literalLookupTable.getIndex((OWLLiteral) a1.getValue()) - literalLookupTable.getIndex((OWLLiteral) a2.getValue());
-                } else {
-                    cmp = a1.getValue().compareTo(a2.getValue());
-                }
-                if (cmp != 0) {
-                    return cmp;
-                }
-
-                cmp = a1.getProperty().compareTo(a2.getProperty());
-                if (cmp != 0) {
-                    return cmp;
-                }
-
-
-                cmp = a1.getSubject().compareTo(a2.getSubject());
-                if (cmp != 0) {
-                    return cmp;
-                }
-
-
-                cmp = compareIterators(
-                        new TreeSet<>(a1.getAnnotations()).iterator(),
-                        new TreeSet<>(a2.getAnnotations()).iterator());
-                if (cmp != 0) {
-                    return cmp;
-                }
-                return cmp;
-
-            }
-
-            private int compareSubClassAxioms(OWLSubClassOfAxiom sc1, OWLSubClassOfAxiom sc2) {
-                int result;
-                result = sc1.getSuperClass().compareTo(sc2.getSuperClass());
-                if (result != 0) {
-                    return result;
-                }
-                result = sc1.getSubClass().compareTo(sc2.getSubClass());
-                if (result != 0) {
-                    return result;
-                }
-
-                return compareIterators(
-                        new TreeSet<>(sc1.getAnnotations()).iterator(),
-                        new TreeSet<>(sc2.getAnnotations()).iterator());
-            }
-
-            private int compareIterators(Iterator<OWLAnnotation> it1, Iterator<OWLAnnotation> it2) {
-                while (it1.hasNext() && it2.hasNext()) {
-                    int cmp = it1.next().compareTo(it2.next());
-                    if (cmp != 0) {
-                        return cmp;
-                    }
-                }
-                if (it1.hasNext()) return -1;
-                if (it2.hasNext()) return +1;
-                return 0;
+            public int compare(IRI o1, IRI o2) {
+                return iriLookupTable.compare(o1, o2);
             }
         };
+        Comparator<OWLAxiom> axiomComparator = new AxiomSorter(iriComparator, new Comparator<OWLLiteral>() {
+            @Override
+            public int compare(OWLLiteral o1, OWLLiteral o2) {
+                return literalLookupTable.compareLiteral(o1,o2);
+            }
+        });
+        handleAxiomsOfType(doc, iriLookupTable, literalLookupTable,lookupTableOutputStream, axiomComparator, AxiomType.ANNOTATION_ASSERTION);
 
         // Axiom tables - axioms by type
         for (AxiomType<?> axiomType : AxiomType.AXIOM_TYPES) {
-            Set<? extends OWLAxiom> axioms = doc.getAxioms(axiomType);
-            ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
-            Collections.sort(orderedAxioms, subCompare);
-            LinkedHashSet<? extends OWLAxiom> tmp = new LinkedHashSet<>(orderedAxioms);
-            lookupTableOutputStream.writeOWLObjects(tmp);
+            if(axiomType != AxiomType.ANNOTATION_ASSERTION) {
+                handleAxiomsOfType(doc, iriLookupTable, literalLookupTable,lookupTableOutputStream, axiomComparator, axiomType);
+            }
         }
 
         iriLookupTable.logDeltaCounts();
         literalLookupTable.logDeltaCounts();
+        literalLookupTable.getDeltaHistoryTable().dumpCounts();
         dos.flush();
+    }
+
+    private void handleAxiomsOfType(OWLOntologyDocument doc, final IRILookupTable iriLookupTable, final LiteralLookupTable literalLookupTable, BinaryOWLOutputStream lookupTableOutputStream, Comparator<OWLAxiom> subCompare, AxiomType<?> axiomType) throws IOException {
+        Set<? extends OWLAxiom> axioms = doc.getAxioms(axiomType);
+        if (!axioms.isEmpty()) {
+            ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
+            if (axiomType == AxiomType.DECLARATION) {
+                Comparator<IRI> iriComparator = new Comparator<IRI>() {
+                    @Override
+                    public int compare(IRI o1, IRI o2) {
+                        return iriLookupTable.compare(o1, o2);
+                    }
+                };
+
+                Comparator<OWLLiteral> literalComparator = new Comparator<OWLLiteral>() {
+                    @Override
+                    public int compare(OWLLiteral o1, OWLLiteral o2) {
+                        return literalLookupTable.compareLiteral(o1, o2);
+                    }
+                };
+                AxiomSorter declarationComparator = new AxiomSorter(iriComparator, literalComparator) {
+                    OWLObjectBinaryTypeSelector selector = new OWLObjectBinaryTypeSelector();
+
+                    @Override
+                    public int compare(OWLAxiom o1, OWLAxiom o2) {
+                        if (o1 instanceof OWLDeclarationAxiom && o2 instanceof OWLDeclarationAxiom) {
+                            OWLDeclarationAxiom d1 = (OWLDeclarationAxiom) o1;
+                            OWLDeclarationAxiom d2 = (OWLDeclarationAxiom) o2;
+                            int cmp = compareEntity(d1.getEntity(),d2.getEntity());
+                            if (cmp != 0) {
+                                return cmp;
+                            }
+                            cmp = d1.accept(selector).getMarker() - d2.accept(selector).getMarker();
+                            if (cmp != 0) {
+                                return cmp;
+                            }
+                            return compareAnnotations(d1.getAnnotations(),d2.getAnnotations());
+                        } else {
+                            return super.compare(o1, o2);
+                        }
+                    }
+                };
+                Collections.sort(orderedAxioms, declarationComparator);
+            } else {
+                Collections.sort(orderedAxioms, subCompare);
+            }
+            LinkedHashSet<? extends OWLAxiom> tmp = new LinkedHashSet<>(orderedAxioms);
+            iriLookupTable.resetCounts();
+            iriLookupTable.getDeltaHistoryTable().resetCounts();
+            logger.info("Axiom Type: {}",axiomType.getName());
+
+            lookupTableOutputStream.writeOWLObjects(tmp);
+            iriLookupTable.logDeltaCounts();
+            iriLookupTable.getDeltaHistoryTable().dumpCounts();
+
+            logger.info("---");
+        }
     }
 
 }

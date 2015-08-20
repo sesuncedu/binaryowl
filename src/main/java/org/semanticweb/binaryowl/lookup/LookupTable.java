@@ -39,10 +39,10 @@
 
 package org.semanticweb.binaryowl.lookup;
 
+import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
 
 import java.io.DataInput;
-import java.io.DataOutput;
 import java.io.IOException;
 
 /**
@@ -107,7 +107,7 @@ public class LookupTable {
     //////////////////////////////////////////////////////////////////
 
 
-    public void writeIRI(IRI iri, DataOutput dataOutput) throws IOException {
+    public void writeIRI(IRI iri, BinaryOWLOutputStream dataOutput) throws IOException {
         iriLookupTable.writeIRI(iri, dataOutput);
     }
 
@@ -141,7 +141,7 @@ public class LookupTable {
     }
     
 
-    public void writeLiteral(OWLLiteral literal, DataOutput dos) throws IOException {
+    public void writeLiteral(OWLLiteral literal, BinaryOWLOutputStream dos) throws IOException {
         literalLookupTable.writeLiteral(dos, literal);
     }
 
