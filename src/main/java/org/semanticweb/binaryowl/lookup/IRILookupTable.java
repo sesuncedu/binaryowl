@@ -79,17 +79,17 @@ public class IRILookupTable {
     //private Map<IRI, Integer> iri2IndexMap = new TreeMap<>();
 
     private IRI [] iriTable;
-    
+
     private OWLClass [] clsTable;
-    
+
     private OWLObjectProperty objectPropertyTable [];
-    
+
     private OWLDataProperty dataPropertyTable [];
-    
+
     private OWLAnnotationProperty annotationPropertyTable [];
-    
+
     private OWLNamedIndividual individualTable [];
-    
+
     private OWLDatatype datatypeTable [];
 
     public int compare(IRI o1, IRI o2) {
@@ -317,10 +317,10 @@ public class IRILookupTable {
         annotationPropertyTable = new OWLAnnotationProperty[size];
         datatypeTable = new OWLDatatype[size];
     }
-    
+
     public IRI readIRI(DataInput dis) throws IOException {
         int index = readIndex(dis);
-        
+
         if(index == NOT_INDEXED_MARKER) {
             return readNonIndexedIRI(dis);
         }
@@ -473,7 +473,7 @@ public class IRILookupTable {
         }
         return cls;
     }
-    
+
     public OWLObjectProperty readObjectPropertyIRI(DataInput dis) throws IOException {
         if(iriTable == null) {
             IRI iri = readIRI(dis);
