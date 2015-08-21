@@ -110,10 +110,9 @@ public class RightToLeftEntityOrderer {
     }
 
     private void addLeftRights(OWLClassExpression lhs, OWLClassExpression rhs) {
-        Set<OWLEntity> lhsSignature = lhs.getSignature();
-        Set<OWLEntity> rhsSignature = rhs.getSignature();
+        Set<OWLClass> lhsSignature = lhs.getClassesInSignature();
+        Set<OWLClass> rhsSignature = rhs.getClassesInSignature();
         for (OWLEntity rhsEntity : rhsSignature) {
-
             for (OWLEntity lhsEntity : lhsSignature) {
                 if (lhsEntity.getIRI().getFragment().contains("GO_0008152")) {
                     logger.trace("should be a root");
