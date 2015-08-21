@@ -1,21 +1,28 @@
 package org.semanticweb.binaryowl.stream;
 
 import org.semanticweb.binaryowl.BinaryOWLVersion;
+import org.semanticweb.binaryowl.lookup.DeltaHistoryTable;
 import org.semanticweb.binaryowl.lookup.LookupTable;
+import org.semanticweb.binaryowl.lookup.LookupTableObjectComparator;
 import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryType;
 import org.semanticweb.binaryowl.owlobject.serializer.OWLLiteralSerializer;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotation;
+import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLAnonymousIndividual;
+import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLObject;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-
-import static org.semanticweb.binaryowl.stream.BinaryOWLStreamUtil.writeCollectionSize;
 /**
  * Author: Matthew Horridge<br>
  * Stanford University<br>
@@ -33,6 +40,7 @@ public class BinaryOWLOutputStream extends OutputStream {
     private BinaryOWLVersion version = BinaryOWLVersion.getVersion(1);
 
     private final SetTransformer setTransformer;
+    private LookupTableObjectComparator lookupTableObjectComparator;
 
     public BinaryOWLOutputStream(OutputStream dataOutput, BinaryOWLVersion version) {
         if(dataOutput instanceof DataOutputStream) {
@@ -43,12 +51,14 @@ public class BinaryOWLOutputStream extends OutputStream {
         }
         this.version = version;
         lookupTable = LookupTable.emptyLookupTable();
+        lookupTableObjectComparator = new LookupTableObjectComparator(lookupTable);
         this.setTransformer = new PassThroughSetTransformer();
     }
 
     public BinaryOWLOutputStream(DataOutputStream dataOutput, LookupTable lookupTable) {
         this.dataOutput = dataOutput;
         this.lookupTable = lookupTable;
+        lookupTableObjectComparator = new LookupTableObjectComparator(lookupTable);
         this.setTransformer = new PassThroughSetTransformer();
     }
 
@@ -56,6 +66,7 @@ public class BinaryOWLOutputStream extends OutputStream {
         this.dataOutput = dataOutput;
         this.setTransformer = setTransformer;
         this.lookupTable = LookupTable.emptyLookupTable();
+        lookupTableObjectComparator = new LookupTableObjectComparator(lookupTable);
     }
 
     public BinaryOWLVersion getVersion() {
@@ -109,20 +120,50 @@ public class BinaryOWLOutputStream extends OutputStream {
         dataOutput.write(tmp, offset, tmp.length - offset);
     }
 
+    DeltaHistoryTable annotationPropertyHistoryTable = new DeltaHistoryTable(6, 0, 0, 2);
     public void writeOWLObject(OWLObject object) throws IOException {
-        OWLObjectBinaryType.write(object, this);
-    }
-    
-    public void writeOWLObjects(Set<? extends OWLObject> objects) throws IOException {
-        final int size = objects.size();
-        writeCollectionSize(size, dataOutput);
-        for(OWLObject object : setTransformer.transform(objects)) {
-            writeOWLObject(object);
+        if (object instanceof OWLAnnotation) {
+            OWLAnnotation annotation = (OWLAnnotation) object;
+            writeByte(OWLObjectBinaryType.OWL_ANNOTATION.getMarker());
+            lookupTable.getAnnotationLookupTable().write(this, annotation);
+        } else if (object instanceof OWLAnnotationProperty) {
+            OWLAnnotationProperty property = (OWLAnnotationProperty) object;
+            writeByte(OWLObjectBinaryType.OWL_ANNOTATION_PROPERTY.getMarker());
+            lookupTable.writeIRI(property.getIRI(), this, annotationPropertyHistoryTable);
+        } else {
+            OWLObjectBinaryType.write(object, this);
         }
     }
 
-    public void writeOWLObjectList(List<? extends OWLObject> list) throws IOException {
-        writeCollectionSize(list.size(), dataOutput);
+    public void writeSortedOWLObjects(Set<? extends OWLObject> objects, Comparator<OWLObject> comparator) throws IOException {
+        List<? extends OWLObject> list = new ArrayList<>(objects);
+        Collections.sort(list, comparator);
+        writeOWLObjectList(list);
+    }
+
+    public void writeOWLObjects(Set<? extends OWLObject> objects) throws IOException {
+        final int size = objects.size();
+        writeCollectionSize(size);
+        if (objects.size() > 0) {
+            OWLObject o = objects.iterator().next();
+            if (o instanceof OWLClassExpression) {
+                writeSortedOWLObjects(objects, lookupTableObjectComparator);
+                return;
+            }
+            if ( o instanceof OWLAnnotation) {
+                writeSortedOWLObjects(objects, lookupTableObjectComparator);
+                return;
+            }
+        }
+
+        for (OWLObject object : setTransformer.transform(objects)) {
+            writeOWLObject(object);
+        }
+
+    }
+
+    public void writeOWLObjectList(Collection<? extends OWLObject> list) throws IOException {
+        writeCollectionSize(list.size());
         for(OWLObject object : list) {
             writeOWLObject(object);
         }
@@ -439,6 +480,9 @@ public class BinaryOWLOutputStream extends OutputStream {
         dataOutput.write(bytes);
     }
 
+    public void writeCollectionSize(int size) throws IOException {
+        BinaryOWLStreamUtil.writeCollectionSize(size, dataOutput);
+    }
     public int size() {
         return dataOutput.size();
     }

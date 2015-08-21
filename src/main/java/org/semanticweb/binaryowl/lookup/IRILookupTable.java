@@ -68,7 +68,7 @@ import static org.semanticweb.owlapi.util.StructureWalker.AnnotationWalkingContr
  * Bio-Medical Informatics Research Group<br>
  * Date: 06/04/2012
  */
-public class IRILookupTable {
+public class IRILookupTable implements Comparator<IRI> {
 
     private static Logger logger = LoggerFactory.getLogger(IRILookupTable.class);
     public static final int NOT_INDEXED_MARKER = -8;
@@ -92,6 +92,7 @@ public class IRILookupTable {
 
     private OWLDatatype datatypeTable [];
 
+    @Override
     public int compare(IRI o1, IRI o2) {
         int i1 = getIndex(o1);
         int i2 = getIndex(o2);
@@ -101,6 +102,7 @@ public class IRILookupTable {
             return i1 - i2;
         }
     }
+
 
     private static class PseudoSet<O> extends AbstractSet<O> {
         private ArrayList<O> delegate;
@@ -196,7 +198,7 @@ public class IRILookupTable {
         if (shouldSortIRITable) {
             renumberIRIMappings();
         }
-        deltaHistoryTable = new DeltaHistoryTable(6, iri2IndexMap.size(),0,127);
+        deltaHistoryTable = new DeltaHistoryTable(6, iri2IndexMap.size(),-1,1);
 
     }
 
@@ -394,19 +396,17 @@ public class IRILookupTable {
                         indexCount, bcdCount, scdCount, icdCount));
     }
 
-    private void writeIndex(int i, BinaryOWLOutputStream dos) throws IOException {
+    private void writeIndex(int i, BinaryOWLOutputStream dos, DeltaHistoryTable table) throws IOException {
         indexCount++;
+       // assert i >=0;
         if(i == NOT_INDEXED_MARKER) {
             dos.writeByte(i);
             return;
         }
-        if (i == 0) {
-            dos.writeByte(0);
-            return;
-        }
-        long codedDelta = deltaHistoryTable.getCodedDelta(i);
-        long delta = deltaHistoryTable.decodeDelta(codedDelta);
-        long deltaBaseId = deltaHistoryTable.decodeDeltaBase(codedDelta);
+
+        long codedDelta = table.getCodedDelta(i);
+        long delta = table.decodeDelta(codedDelta);
+        long deltaBaseId = table.decodeDeltaBase(codedDelta);
         byte flagByte = (byte) deltaBaseId;
 
         if (false) {
@@ -575,11 +575,10 @@ public class IRILookupTable {
         }
         return ind;
     }
-
-    public void writeIRI(IRI iri, BinaryOWLOutputStream dataOutput) throws IOException {
+    public void writeIRI(IRI iri, BinaryOWLOutputStream dataOutput, DeltaHistoryTable table) throws IOException {
         int index = getIndex(iri);
         if(index == -1) {
-            writeIndex(NOT_INDEXED_MARKER, dataOutput);
+            writeIndex(NOT_INDEXED_MARKER, dataOutput,table);
             String start = iri.getNamespace();
             if(start == null) {
                 dataOutput.writeByte(0);
@@ -598,9 +597,14 @@ public class IRILookupTable {
             }
         }
         else {
-            writeIndex(index, dataOutput);
+            writeIndex(index, dataOutput,table);
         }
     }
+
+    public void writeIRI(IRI iri, BinaryOWLOutputStream dataOutput) throws IOException {
+             writeIRI(iri,dataOutput,deltaHistoryTable);
+    }
+
 
 
 }

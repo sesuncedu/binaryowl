@@ -73,13 +73,14 @@ public class AxiomSorter implements Comparator<OWLAxiom> {
             return cmp;
         }
 
-        cmp = compareAnnotationValue(a1.getValue(), a2.getValue());
-
+        cmp = compareEntity(a1.getProperty(), a2.getProperty());
         if (cmp != 0) {
             return cmp;
         }
 
-        cmp = compareEntity(a1.getProperty(), a2.getProperty());
+
+        cmp = compareAnnotationValue(a1.getValue(), a2.getValue());
+
         if (cmp != 0) {
             return cmp;
         }

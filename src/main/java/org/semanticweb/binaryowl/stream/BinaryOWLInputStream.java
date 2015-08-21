@@ -3,18 +3,23 @@ package org.semanticweb.binaryowl.stream;
 import org.semanticweb.binaryowl.BinaryOWLParseException;
 import org.semanticweb.binaryowl.BinaryOWLVersion;
 import org.semanticweb.binaryowl.lookup.IRILookupTable;
-import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryType;
 import org.semanticweb.binaryowl.lookup.LookupTable;
+import org.semanticweb.binaryowl.owlobject.OWLObjectBinaryType;
 import org.semanticweb.binaryowl.owlobject.serializer.OWLLiteralSerializer;
 import org.semanticweb.owlapi.model.*;
 
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.semanticweb.binaryowl.stream.BinaryOWLStreamUtil.ListBackedSet;
-import static org.semanticweb.binaryowl.stream.BinaryOWLStreamUtil.readVariableLengthUnsignedInt;
 
 /**
  * Author: Matthew Horridge<br>
@@ -115,7 +120,7 @@ public class BinaryOWLInputStream extends InputStream {
 
     @SuppressWarnings("unchecked")
     public <O extends OWLObject> Set<O> readOWLObjects() throws IOException, BinaryOWLParseException {
-        int length = readVariableLengthUnsignedInt(dataInput);
+        int length = readVariableLengthUnsignedInt();
         if(length == 0) {
             return Collections.emptySet();
         }
@@ -130,7 +135,7 @@ public class BinaryOWLInputStream extends InputStream {
     }
 
     public <O extends OWLObject> List<O> readOWLObjectList() throws IOException, BinaryOWLParseException {
-        int size = readVariableLengthUnsignedInt(dataInput);
+        int size = readVariableLengthUnsignedInt();
         if(size == 0) {
             return Collections.emptyList();
         }
@@ -633,5 +638,9 @@ public class BinaryOWLInputStream extends InputStream {
     @Override
     public int read() throws IOException {
         return dataInput.read();
+    }
+
+    public int readVariableLengthUnsignedInt() throws IOException {
+        return BinaryOWLStreamUtil.readVariableLengthUnsignedInt(dataInput);
     }
 }

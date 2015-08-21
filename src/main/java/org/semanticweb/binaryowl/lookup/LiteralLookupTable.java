@@ -61,7 +61,7 @@ import java.util.*;
  * Bio-Medical Informatics Research Group<br>
  * Date: 06/04/2012
  */
-public class LiteralLookupTable {
+public class LiteralLookupTable implements Comparator<OWLLiteral> {
    private static Logger logger = LoggerFactory.getLogger(LiteralLookupTable.class);
 
 
@@ -135,7 +135,7 @@ public class LiteralLookupTable {
         }
     }
 
-    public int compareLiteral(OWLLiteral o1, OWLLiteral o2) {
+    public int compare(OWLLiteral o1, OWLLiteral o2) {
         int i1 = getIndex(o1);
         int i2 = getIndex(o2);
         if(i1 < 0 || i2 < 0) {
@@ -152,9 +152,8 @@ public class LiteralLookupTable {
             indexMap = new LinkedHashMap<>();
         }
         InternLiteralsVisitor interner = new InternLiteralsVisitor();
-        for (OWLAnnotation annotation : ontology.getAnnotations()) {
-            annotation.accept(interner);
-        }
+        interner.handleAnnotations(ontology.getOntology());
+
         Comparator<OWLAxiom> subCompare = new AxiomSorter(new Comparator<IRI>() {
             @Override
             public int compare(IRI o1, IRI o2) {
@@ -175,7 +174,7 @@ public class LiteralLookupTable {
             //logger.warn("not renumbering literal ids");
             renumberLiterals();
         }
-        deltaHistoryTable = new DeltaHistoryTable(6, indexMap.size(),-1,1024);
+        deltaHistoryTable = new DeltaHistoryTable(6, indexMap.size(), -2, 16);
     }
 
     private void renumberLiterals() {
@@ -476,10 +475,12 @@ public class LiteralLookupTable {
             }
         }
 
-        private void handleAnnotations(OWLObject object) {
+        public void handleAnnotations(OWLObject object) {
             if (object instanceof HasAnnotations) {
                 Collection<OWLAnnotation> annotations = ((HasAnnotations) object).getAnnotations();
-                if (annotations != null && annotations.size() > 0) {
+                if (annotations.size() > 0) {
+                    List<OWLAnnotation> list = new ArrayList<>(annotations);
+                    Collections.sort(list, new OWLAnnotationComparator());
                     for (OWLAnnotation annotation : annotations) {
                         annotation.accept(this);
                     }
@@ -635,6 +636,38 @@ public class LiteralLookupTable {
         public void visit(OWLObjectPropertyRangeAxiom axiom) {
             handleDefault(axiom);
             axiom.getRange().accept(this);
+        }
+
+        private class OWLAnnotationComparator implements Comparator<OWLAnnotation> {
+            @Override
+            public int compare(OWLAnnotation o1, OWLAnnotation o2) {
+                int cmp;
+                cmp = iriLookupTable.compare(o1.getProperty().getIRI(), o2.getProperty().getIRI());
+                if (cmp != 0) {
+                    return cmp;
+                }
+                cmp = o1.getValue().compareTo(o2.getValue());
+                if (cmp != 0) {
+                    return cmp;
+                }
+                Iterator<OWLAnnotation> i1 = o1.getAnnotations().iterator();
+                Iterator<OWLAnnotation> i2 = o2.getAnnotations().iterator();
+                while (i1.hasNext() && i2.hasNext()) {
+                    cmp = compare(i1.next(), i2.next());
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                }
+                if (i1.hasNext()) {
+                    return +1;
+                }
+                if (i2.hasNext()) {
+                    return -1;
+                }
+                return 0;
+
+            }
+
         }
     }
 }

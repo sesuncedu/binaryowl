@@ -57,8 +57,8 @@ public class OWLAnnotationAssertionAxiomSerializer extends AbstractAxiomSerializ
 
     @Override
     protected void writeAxiom(OWLAnnotationAssertionAxiom axiom, BinaryOWLOutputStream outputStream) throws IOException {
-        outputStream.writeOWLObject(axiom.getProperty());
         outputStream.writeOWLObject(axiom.getSubject());
+        outputStream.writeOWLObject(axiom.getProperty());
         outputStream.writeOWLObject(axiom.getValue());
     }
 

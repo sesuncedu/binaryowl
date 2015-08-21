@@ -14,6 +14,7 @@ public class DeltaHistoryTable {
     private static Logger logger = LoggerFactory.getLogger(DeltaHistoryTable.class);
     private final int baseIdWidth;
     private final int idHistory[];
+    private final int prevId[];
     private final long lastUsed[];
     private long now = 0;
     private final int positiveClose;
@@ -32,12 +33,14 @@ public class DeltaHistoryTable {
         int size = 1 << baseIdWidth;
         idHistory = new int[size];
         lastUsed = new long[size];
+        prevId = new int[size];
         baseIdMask = (size) - 1;
         int initSlice = maxValue / size;
         int initValue=0;
 
         for(int i=0;i<idHistory.length;i++) {
             idHistory[i] = initValue;
+            prevId[i] = -1;
             initValue += initSlice;
             //idHistory[i] = 0;
         }
@@ -55,6 +58,7 @@ public class DeltaHistoryTable {
         logger.debug("Before: delta table = {}",this);
         int minDeltaIndex = findClosestMatch(id);
         int delta = id - idHistory[minDeltaIndex];
+        logger.trace("Table-{} {}: {} ({}) + {}", this.hashCode(), id, idHistory[minDeltaIndex], minDeltaIndex, delta);
         long codedDelta = delta << baseIdWidth | minDeltaIndex;
         updateTable(id, minDeltaIndex, delta);
         if (delta >= 0) {
@@ -87,11 +91,15 @@ public class DeltaHistoryTable {
     private void updateTable(int id, int minDeltaIndex, int delta) {
         if (delta == 0) {
             handleHit(id, delta, minDeltaIndex);
-        } else if (delta >=negativeClose && delta <= positiveClose) {
+        } else if (isCloseMatch(delta)) {
             handleClose(id, delta, minDeltaIndex);
         } else {
             handleMiss(id,delta,minDeltaIndex);
         }
+    }
+
+    private boolean isCloseMatch(int delta) {
+        return delta >= negativeClose && delta <= positiveClose;
     }
 
     private void handleHit(int id, int delta, int hitIndex) {
@@ -99,15 +107,28 @@ public class DeltaHistoryTable {
     }
 
     private void handleClose(int id, int delta, int minDeltaIndex) {
-        if (delta != 0) {
-            logger.debug("pseudo hit for {} - {}:{}", id, minDeltaIndex, delta);
+        if (prevId[minDeltaIndex] >=0) {
+            int prevDelta = idHistory[minDeltaIndex] - prevId[minDeltaIndex];
+            logger.trace("delta is {}, prevDelta is {}", delta,prevDelta);
+            if(delta == prevDelta) {
+                for (int i = 0; i < idHistory.length; i++) {
+                    if (i != minDeltaIndex && idHistory[i] == id + prevDelta ) {
+                        logger.info("wiping entry {} as {} is too close to {} - {}", i, idHistory[i], id, prevDelta);
+                        idHistory[i] = 0;
+                        prevId[i] = -1;
+                        lastUsed[i] = -1;
+                    }
+                }
+            }
         }
+        prevId[minDeltaIndex] = idHistory[minDeltaIndex];
         idHistory[minDeltaIndex] = id;
         lastUsed[minDeltaIndex] = ++now;
     }
 
 
     private void handleMiss( int nonMatchId, int delta,int minDeltaIndex) {
+        logger.info("Miss for {}",nonMatchId);
         long lruTime = Long.MAX_VALUE;
         int lruIndex = -1;
         for (int i = 0; i < idHistory.length; i++) {
@@ -116,7 +137,13 @@ public class DeltaHistoryTable {
                 lruIndex = i;
             }
         }
+        if(prevId[lruIndex] != -1) {
+            logger.info("LRU discarding stream @ {}, {},{} ",lruIndex,prevId[lruIndex],idHistory[lruIndex]);
+        }  else {
+            logger.info("LRU discarding non-stream @ {}, {}",lruIndex,idHistory[lruIndex]);
+        }
         idHistory[lruIndex] = nonMatchId;
+        prevId[lruIndex] = -1;
         lastUsed[lruIndex] = ++now;
     }
 

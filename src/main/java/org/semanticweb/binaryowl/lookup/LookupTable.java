@@ -58,7 +58,7 @@ public class LookupTable {
     private AnonymousIndividualLookupTable anonymousIndividualLookupTable;
 
     private LiteralLookupTable literalLookupTable;
-
+    private GenericLookupTable<OWLAnnotation> annotationLookupTable;
     private static LookupTable EMPTY_LOOKUP_TABLE = new LookupTable(new IRILookupTable(), new AnonymousIndividualLookupTable() {
         @Override
         public int getIndex(OWLAnonymousIndividual ind) {
@@ -111,6 +111,10 @@ public class LookupTable {
         iriLookupTable.writeIRI(iri, dataOutput);
     }
 
+    public void writeIRI(IRI iri, BinaryOWLOutputStream binaryOWLOutputStream, DeltaHistoryTable table) throws IOException {
+        iriLookupTable.writeIRI(iri, binaryOWLOutputStream, table);
+    }
+
     public IRI readIRI(DataInput dataInput) throws IOException {
         return iriLookupTable.readIRI(dataInput);
     }
@@ -139,8 +143,10 @@ public class LookupTable {
     public OWLDatatype readDatatypeIRI(DataInput dataInput) throws IOException {
         return iriLookupTable.readDataypeIRI(dataInput);
     }
-    
 
+    public void write(OWLAnnotation annotation, BinaryOWLOutputStream bos) throws IOException {
+        annotationLookupTable.write(bos, annotation);
+    }
     public void writeLiteral(OWLLiteral literal, BinaryOWLOutputStream dos) throws IOException {
         literalLookupTable.writeLiteral(dos, literal);
     }
@@ -150,4 +156,35 @@ public class LookupTable {
        throw new NoSuchMethodError("read Literal method not implemented yet");
     }
 
+    public GenericLookupTable<OWLAnnotation> getAnnotationLookupTable() {
+        return annotationLookupTable;
+    }
+
+    public void setAnnotationLookupTable(GenericLookupTable<OWLAnnotation> annotationLookupTable) {
+        this.annotationLookupTable = annotationLookupTable;
+    }
+
+    public int compareIRI(IRI o1, IRI o2) {
+        return iriLookupTable.compare(o1, o2);
+    }
+
+    public int compareLiteral(OWLLiteral o1, OWLLiteral o2) {
+        return literalLookupTable.compare(o1, o2);
+    }
+
+    public int compareAnnotationValue(OWLAnnotationValue v1, OWLAnnotationValue v2) {
+        if (v1 instanceof IRI) {
+            if (v2 instanceof IRI) {
+                return compareIRI((IRI) v1, (IRI) v2);
+            } else {
+                return -1;
+            }
+        } else {
+            if (v2 instanceof OWLLiteral) {
+                return compareLiteral((OWLLiteral) v1, (OWLLiteral) v2);
+            } else {
+                return +1;
+            }
+        }
+    }
 }
