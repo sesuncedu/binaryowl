@@ -169,10 +169,10 @@ public class IRILookupTable implements Comparator<IRI> {
             iri2IndexMap = new LinkedHashMap<>();
         }
 
-        processSignatureSubset(ontology.getAnnotationPropertiesInSignature());
+        /*processSignatureSubset(ontology.getAnnotationPropertiesInSignature());
         processSignatureSubset(ontology.getDataPropertiesInSignature());
         processSignatureSubset(ontology.getObjectPropertiesInSignature());
-        processSignatureSubset(ontology.getDatatypesInSignature());
+        processSignatureSubset(ontology.getDatatypesInSignature());    */
 
         RightToLeftEntityOrderer order = new RightToLeftEntityOrderer(ontology.getOntology());
         Set<RightToLeftEntityOrderer.Node> entityOrder = order.getNodes();

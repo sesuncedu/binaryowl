@@ -39,7 +39,9 @@
 
 package org.semanticweb.binaryowl.lookup;
 
-import com.google.common.base.Charsets;
+import com.google.common.base.*;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.MultimapBuilder;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
 import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
@@ -145,6 +147,7 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         }
     }
     private boolean shouldSortLiterals = false;
+
     private void internLiterals(OWLOntologyDocument ontology) {
         if (shouldSortLiterals) {
             indexMap = new TreeMap<>();
@@ -152,29 +155,42 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
             indexMap = new LinkedHashMap<>();
         }
         InternLiteralsVisitor interner = new InternLiteralsVisitor();
-        interner.handleAnnotations(ontology.getOntology());
 
-        Comparator<OWLAxiom> subCompare = new AxiomSorter(new Comparator<IRI>() {
-            @Override
-            public int compare(IRI o1, IRI o2) {
-                return iriLookupTable.compare(o1,o2);
-            }
-        });
 
-        for (AxiomType<?> axiomType : AxiomType.AXIOM_TYPES) {
-            Set<? extends OWLAxiom> axioms = ontology.getAxioms(axiomType);
-            ArrayList<? extends OWLAxiom> orderedAxioms = new ArrayList<>(axioms);
-            Collections.sort(orderedAxioms,subCompare);
-            for (OWLAxiom axiom : orderedAxioms) {
-                axiom.accept(interner);
+        Set<OWLAxiom> axiomSet = ontology.getOntology().getAxioms();
+        Comparator<OWLAxiom> axiomComparator = new AxiomSorter(iriLookupTable);
+
+        final Multimap<IRI, OWLAxiom> axiomsByIRI = MultimapBuilder.treeKeys(iriLookupTable).treeSetValues(axiomComparator).build();
+
+        for (Iterator<OWLAxiom> iterator = axiomSet.iterator(); iterator.hasNext(); ) {
+            OWLAxiom axiom = iterator.next();
+            com.google.common.base.Optional<IRI> key = PrimarySortKeyFinder.getPrimarySortKey(axiom);
+            if (key.isPresent()) {
+                axiomsByIRI.put(key.get(), axiom);
+                iterator.remove();
             }
         }
+        ArrayList<OWLAxiom> generalAxioms = new ArrayList<>(axiomSet);
+        Collections.sort(generalAxioms, axiomComparator);
+        internAxioms(ontology, interner, axiomsByIRI, generalAxioms, true);
+        internAxioms(ontology, interner, axiomsByIRI, generalAxioms, false);
 
         if (shouldSortLiterals) {
             //logger.warn("not renumbering literal ids");
             renumberLiterals();
         }
         deltaHistoryTable = new DeltaHistoryTable(6, indexMap.size(), -2, 16);
+    }
+
+    private void internAxioms(OWLOntologyDocument ontology, InternLiteralsVisitor interner, Multimap<IRI, OWLAxiom> axiomsByIRI, ArrayList<OWLAxiom> generalAxioms, boolean doAnnotations) {
+        interner.setVisitingAnnotations(doAnnotations);
+        ontology.getOntology().accept(interner);
+        for (OWLAxiom axiom : axiomsByIRI.values()) {
+              axiom.accept(interner);
+        }
+        for (OWLAxiom axiom : generalAxioms) {
+            axiom.accept(interner);
+        }
     }
 
     private void renumberLiterals() {
@@ -464,10 +480,17 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
     }
 
     private class InternLiteralsVisitor extends OWLObjectVisitorAdapter {
+        boolean visitingAnnotations;
+
+        public boolean isVisitingAnnotations() {
+            return visitingAnnotations;
+        }
 
         @Override
         protected void handleDefault(OWLObject object) {
-            handleAnnotations(object);
+            if (isVisitingAnnotations()) {
+                handleAnnotations(object);
+            }
 
             if (object instanceof HasFiller) {
                 HasFiller hasFiller = (HasFiller) object;
@@ -491,16 +514,20 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
 
         @Override
         public void visit(OWLAnnotation node) {
-            handleAnnotations(node);
-            if (node.getValue() instanceof OWLLiteral) {
-                OWLLiteral value = (OWLLiteral) node.getValue();
-                value.accept(this);
+            if (isVisitingAnnotations()) {
+                handleDefault(node);
+                if (node.getValue() instanceof OWLLiteral) {
+                    OWLLiteral value = (OWLLiteral) node.getValue();
+                    internLiteral(value);
+                }
             }
         }
 
         @Override
         public void visit(OWLLiteral node) {
-            internLiteral(node);
+            if (!isVisitingAnnotations()) {
+                internLiteral(node);
+            }
         }
 
         @Override
@@ -636,6 +663,10 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         public void visit(OWLObjectPropertyRangeAxiom axiom) {
             handleDefault(axiom);
             axiom.getRange().accept(this);
+        }
+
+        public void setVisitingAnnotations(boolean vistingAnnotations) {
+            this.visitingAnnotations = vistingAnnotations;
         }
 
         private class OWLAnnotationComparator implements Comparator<OWLAnnotation> {
