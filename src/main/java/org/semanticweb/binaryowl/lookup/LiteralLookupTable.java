@@ -39,23 +39,32 @@
 
 package org.semanticweb.binaryowl.lookup;
 
-import com.google.common.base.*;
+import com.google.common.base.Charsets;
+import com.google.common.collect.MinMaxPriorityQueue;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
+import org.jetbrains.annotations.NotNull;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
 import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLObjectVisitorAdapter;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
+import org.simmetrics.StringMetric;
+import org.simmetrics.StringMetrics;
+import org.simmetrics.metrics.OverlapCoefficient;
+import org.simmetrics.tokenizers.Tokenizers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.ac.manchester.cs.owl.owlapi.OWLDatatypeImpl;
 import uk.ac.manchester.cs.owl.owlapi.OWLLiteralImplNoCompression;
 
 import java.io.DataInput;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Author: Matthew Horridge<br>
@@ -134,7 +143,113 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         this.useInterning = useInterning;
         if (useInterning) {
             internLiterals(ontology);
+            checkTheSimilarity();
         }
+
+    }
+
+    private static class Sim implements Comparable {
+        OWLLiteral literal;
+        int similarity;
+        int index;
+
+        public Sim(OWLLiteral literal, float similarity, int index) {
+            this.literal = literal;
+            this.index = index;
+            this.similarity = Math.round((1 - similarity) * 1000);
+        }
+
+        @Override
+        public int compareTo(Object o) {
+            assert o instanceof Sim;
+            return similarity - ((Sim) o).similarity;
+        }
+
+        @Override
+        public String toString() {
+            final StringBuilder sb = new StringBuilder("Sim{");
+            sb.append(literal.getLiteral());
+            sb.append(String.format(" @ %,d", index));
+            sb.append(", ").append(String.format("%0,3f", getSim()));
+            sb.append('}');
+            return sb.toString();
+        }
+
+        public double getSim() {
+            double sim = ((float) (similarity)) / 1000;
+            sim = 1.0 - sim;
+            return sim;
+        }
+    }
+
+    class MetricTask implements Runnable {
+        int i;
+        OWLLiteral iLiteral;
+        private final PrintWriter pr;
+        StringMetric stringMetric;
+        MinMaxPriorityQueue<Sim> topTen;
+
+        public MetricTask(int i, StringMetric stringMetric, MinMaxPriorityQueue topTen, OWLLiteral iLiteral, PrintWriter pr) {
+            this.i = i;
+            this.stringMetric = stringMetric;
+            this.topTen = topTen;
+            this.iLiteral = iLiteral;
+            this.pr = pr;
+        }
+
+        @Override
+        public void run() {
+            for (int j = 0; j < tableList.size(); j++) {
+                if (i != j) {
+                    OWLLiteral jLiteral = tableList.get(j);
+                    float sim = stringMetric.compare(iLiteral.getLiteral(), jLiteral.getLiteral());
+                    topTen.add(new Sim(jLiteral, sim, j));
+                }
+            }
+            if (true || i % 10 == 0) {
+                logger.info("{} - {} ({}) : {}", Thread.currentThread(), i, iLiteral.getLiteral(), topTen);
+            }
+            synchronized (pr) {
+                while (!topTen.isEmpty()) {
+                    Sim piglet = topTen.removeFirst();
+                    pr.format("%,d: %s - %s (%,d) = %01.3f\n", i, iLiteral.getLiteral(), piglet.literal.getLiteral(), piglet.index, piglet.getSim());
+                }
+                pr.flush();
+            }
+        }
+    }
+
+    private void checkTheSimilarity() {
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+
+        try (PrintWriter pr = new PrintWriter("/tmp/sims.txt")) {
+
+            MinMaxPriorityQueue.Builder<Comparable> comparableBuilder = MinMaxPriorityQueue.maximumSize(10);
+            StringMetric stringMetric = getOverlapQgramMetric();
+            // stringMetric= new JaroWinkler(0.7f, 0.1f, 4);
+            for (int i = 0; i < tableList.size(); i++) {
+                OWLLiteral iLiteral = tableList.get(i);
+                MetricTask task = new MetricTask(i, stringMetric, comparableBuilder.create(), iLiteral, pr);
+                executor.execute(task);
+            }
+            executor.shutdown();
+            while (!executor.isTerminated()) {
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException e) {
+                    logger.error("Interrupted sleep", e); //To change body of catch statement use File | Settings | File Templates.
+                }
+            }
+        } catch (FileNotFoundException e) {
+            logger.error("Caught Exception", e); //To change body of catch statement use File | Settings | File Templates.
+        }
+
+    }
+
+    @NotNull
+    private StringMetric getOverlapQgramMetric() {
+        return StringMetrics.createForSetMetric(new OverlapCoefficient<String>(),
+                Tokenizers.qGram(5));
     }
 
     public int compare(OWLLiteral o1, OWLLiteral o2) {
@@ -196,15 +311,17 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
     private void renumberLiterals() {
         int n=0;
         for (Map.Entry<OWLLiteral, Integer> entry : indexMap.entrySet()) {
-            entry.setValue(n++);
+            entry.setValue(n);
+            tableList.set(n, entry.getKey());
+            n++;
         }
     }
 
     private void internLiteral(OWLLiteral value) {
-        int newIndex = indexMap.size();
-        Integer prev = indexMap.put(value, newIndex);
-        if (prev != null) {
-            indexMap.put(value, prev);
+        if (!indexMap.containsKey(value)) {
+            int newIndex = indexMap.size();
+            indexMap.put(value, newIndex);
+            tableList.add(value);
         }
     }
 

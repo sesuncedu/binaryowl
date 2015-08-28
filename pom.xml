@@ -50,7 +50,12 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-
+    <repositories>
+        <repository>
+            <id>nexus</id>
+            <url>https://oss.sonatype.org/content/repositories/releases/</url>
+        </repository>
+    </repositories>
     <dependencies>
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>
@@ -90,6 +95,11 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <version>1.7.12</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.mpkorstanje</groupId>
+            <artifactId>simmetrics-core</artifactId>
+            <version>3.2.1</version>
         </dependency>
     </dependencies>
 
