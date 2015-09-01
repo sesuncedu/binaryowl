@@ -45,6 +45,7 @@ public class DeltaHistoryTable {
             //idHistory[i] = 0;
         }
         this.positiveClose = positiveClose;
+
         this.negativeClose= negativeClose;
 
     }
@@ -113,7 +114,7 @@ public class DeltaHistoryTable {
             if(delta == prevDelta) {
                 for (int i = 0; i < idHistory.length; i++) {
                     if (i != minDeltaIndex && idHistory[i] == id + prevDelta ) {
-                        logger.info("wiping entry {} as {} is too close to {} - {}", i, idHistory[i], id, prevDelta);
+                        logger.trace("wiping entry {} as {} is too close to {} - {}", i, idHistory[i], id, prevDelta);
                         idHistory[i] = 0;
                         prevId[i] = -1;
                         lastUsed[i] = -1;
@@ -128,7 +129,7 @@ public class DeltaHistoryTable {
 
 
     private void handleMiss( int nonMatchId, int delta,int minDeltaIndex) {
-        logger.info("Miss for {}",nonMatchId);
+        logger.trace("Miss for {}",nonMatchId);
         long lruTime = Long.MAX_VALUE;
         int lruIndex = -1;
         for (int i = 0; i < idHistory.length; i++) {
@@ -138,9 +139,9 @@ public class DeltaHistoryTable {
             }
         }
         if(prevId[lruIndex] != -1) {
-            logger.info("LRU discarding stream @ {}, {},{} ",lruIndex,prevId[lruIndex],idHistory[lruIndex]);
+            logger.trace("LRU discarding stream @ {}, {},{} ",lruIndex,prevId[lruIndex],idHistory[lruIndex]);
         }  else {
-            logger.info("LRU discarding non-stream @ {}, {}",lruIndex,idHistory[lruIndex]);
+            logger.trace("LRU discarding non-stream @ {}, {}",lruIndex,idHistory[lruIndex]);
         }
         idHistory[lruIndex] = nonMatchId;
         prevId[lruIndex] = -1;
