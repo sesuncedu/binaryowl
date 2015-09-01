@@ -43,7 +43,7 @@ import com.google.common.base.Charsets;
 import com.google.common.collect.MinMaxPriorityQueue;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
-import org.jetbrains.annotations.NotNull;
+import com.google.common.util.concurrent.AtomicDouble;
 import org.semanticweb.binaryowl.doc.OWLOntologyDocument;
 import org.semanticweb.binaryowl.stream.BinaryOWLOutputStream;
 import org.semanticweb.owlapi.model.*;
@@ -58,6 +58,7 @@ import org.slf4j.LoggerFactory;
 import uk.ac.manchester.cs.owl.owlapi.OWLDatatypeImpl;
 import uk.ac.manchester.cs.owl.owlapi.OWLLiteralImplNoCompression;
 
+import javax.annotation.Nonnull;
 import java.io.DataInput;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -162,7 +163,12 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         @Override
         public int compareTo(Object o) {
             assert o instanceof Sim;
-            return similarity - ((Sim) o).similarity;
+            Sim o2 = (Sim) o;
+            int cmp =  similarity - o2.similarity;
+            if(cmp != 0) {
+                return cmp;
+            }
+            return index - o2.index;
         }
 
         @Override
@@ -188,29 +194,44 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         private final PrintWriter pr;
         StringMetric stringMetric;
         MinMaxPriorityQueue<Sim> topTen;
+        int lowerWindowSize=10;
+        int upperWindowSize=10;
+        AtomicDouble meanSum;
 
-        public MetricTask(int i, StringMetric stringMetric, MinMaxPriorityQueue topTen, OWLLiteral iLiteral, PrintWriter pr) {
+        public MetricTask(int i, StringMetric stringMetric, MinMaxPriorityQueue topTen, OWLLiteral iLiteral,
+                          PrintWriter pr,AtomicDouble meanSum) {
             this.i = i;
             this.stringMetric = stringMetric;
             this.topTen = topTen;
             this.iLiteral = iLiteral;
             this.pr = pr;
+            this.meanSum = meanSum;
         }
 
         @Override
         public void run() {
-            for (int j = 0; j < tableList.size(); j++) {
+            int start = Math.max(i-lowerWindowSize,0);
+            int end = Math.min(i+upperWindowSize,tableList.size()-1);
+            int n =0;
+            double sum=0.0;
+            for (int j = start; j <= end; j++) {
                 if (i != j) {
+                    n++;
                     OWLLiteral jLiteral = tableList.get(j);
                     float sim = stringMetric.compare(iLiteral.getLiteral(), jLiteral.getLiteral());
+                    sum += sim;
                     topTen.add(new Sim(jLiteral, sim, j));
                 }
             }
-            if (true || i % 10 == 0) {
+            double mean = sum/n;
+            meanSum.addAndGet(mean);
+            if ( i % 1000 == 0) {
+                logger.info("Window from {} to {}, n ={}, mean={}",start,end,n,mean);
                 logger.info("{} - {} ({}) : {}", Thread.currentThread(), i, iLiteral.getLiteral(), topTen);
             }
             synchronized (pr) {
-                while (!topTen.isEmpty()) {
+                pr.format("%,d:  from %d to %d, n =%d, mean=%01.3f\n", i,start, end, n, mean);
+                while (false && !topTen.isEmpty()) {
                     Sim piglet = topTen.removeFirst();
                     pr.format("%,d: %s - %s (%,d) = %01.3f\n", i, iLiteral.getLiteral(), piglet.literal.getLiteral(), piglet.index, piglet.getSim());
                 }
@@ -220,16 +241,17 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
     }
 
     private void checkTheSimilarity() {
-        ExecutorService executor = Executors.newFixedThreadPool(4);
+        ExecutorService executor = Executors.newFixedThreadPool(8);
 
         try (PrintWriter pr = new PrintWriter("/tmp/sims.txt")) {
 
             MinMaxPriorityQueue.Builder<Comparable> comparableBuilder = MinMaxPriorityQueue.maximumSize(10);
             StringMetric stringMetric = getOverlapQgramMetric();
             // stringMetric= new JaroWinkler(0.7f, 0.1f, 4);
+            AtomicDouble meanSum = new AtomicDouble(0.0);
             for (int i = 0; i < tableList.size(); i++) {
                 OWLLiteral iLiteral = tableList.get(i);
-                MetricTask task = new MetricTask(i, stringMetric, comparableBuilder.create(), iLiteral, pr);
+                MetricTask task = new MetricTask(i, stringMetric, comparableBuilder.create(), iLiteral, pr,meanSum);
                 executor.execute(task);
             }
             executor.shutdown();
@@ -240,16 +262,17 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
                     logger.error("Interrupted sleep", e); //To change body of catch statement use File | Settings | File Templates.
                 }
             }
+            pr.format("Mean of means is %01.3f\n",meanSum.get()/tableList.size());
         } catch (FileNotFoundException e) {
             logger.error("Caught Exception", e); //To change body of catch statement use File | Settings | File Templates.
         }
 
     }
 
-    @NotNull
+    @Nonnull
     private StringMetric getOverlapQgramMetric() {
         return StringMetrics.createForSetMetric(new OverlapCoefficient<String>(),
-                Tokenizers.qGram(5));
+                Tokenizers.qGram(4));
     }
 
     public int compare(OWLLiteral o1, OWLLiteral o2) {
@@ -264,11 +287,8 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
     private boolean shouldSortLiterals = false;
 
     private void internLiterals(OWLOntologyDocument ontology) {
-        if (shouldSortLiterals) {
-            indexMap = new TreeMap<>();
-        } else {
-            indexMap = new LinkedHashMap<>();
-        }
+        indexMap = new LinkedHashMap<>();
+
         InternLiteralsVisitor interner = new InternLiteralsVisitor();
 
 
@@ -288,6 +308,17 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         ArrayList<OWLAxiom> generalAxioms = new ArrayList<>(axiomSet);
         Collections.sort(generalAxioms, axiomComparator);
         internAxioms(ontology, interner, axiomsByIRI, generalAxioms, true);
+        List<OWLAnnotation> allAnnotations = interner.annotationList;
+        interner.annotationList=null;
+        Collections.sort(allAnnotations, new Comparator<OWLAnnotation>() {
+            @Override
+            public int compare(OWLAnnotation o1, OWLAnnotation o2) {
+                return iriLookupTable.compare(o1.getProperty().getIRI(),o2.getProperty().getIRI());
+            }
+        });
+        for (OWLAnnotation annotation : allAnnotations) {
+            internLiteral(annotation.getValue().asLiteral().get());
+        }
         internAxioms(ontology, interner, axiomsByIRI, generalAxioms, false);
 
         if (shouldSortLiterals) {
@@ -310,10 +341,11 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
 
     private void renumberLiterals() {
         int n=0;
-        for (Map.Entry<OWLLiteral, Integer> entry : indexMap.entrySet()) {
-            entry.setValue(n);
-            tableList.set(n, entry.getKey());
-            n++;
+        Collections.sort(tableList);
+        //Collections.shuffle(tableList);
+        indexMap = new LinkedHashMap<>(tableList.size());
+        for (OWLLiteral literal : tableList) {
+            indexMap.put(literal, n++);
         }
     }
 
@@ -599,6 +631,7 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
     private class InternLiteralsVisitor extends OWLObjectVisitorAdapter {
         boolean visitingAnnotations;
 
+        public  ArrayList<OWLAnnotation> annotationList = new ArrayList<>();
         public boolean isVisitingAnnotations() {
             return visitingAnnotations;
         }
@@ -632,11 +665,12 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
         @Override
         public void visit(OWLAnnotation node) {
             if (isVisitingAnnotations()) {
-                handleDefault(node);
                 if (node.getValue() instanceof OWLLiteral) {
-                    OWLLiteral value = (OWLLiteral) node.getValue();
-                    internLiteral(value);
+                  //  OWLLiteral value = (OWLLiteral) node.getValue();
+                   // internLiteral(value);
+                    annotationList.add(node);
                 }
+                handleDefault(node);
             }
         }
 
@@ -786,36 +820,37 @@ public class LiteralLookupTable implements Comparator<OWLLiteral> {
             this.visitingAnnotations = vistingAnnotations;
         }
 
-        private class OWLAnnotationComparator implements Comparator<OWLAnnotation> {
-            @Override
-            public int compare(OWLAnnotation o1, OWLAnnotation o2) {
-                int cmp;
-                cmp = iriLookupTable.compare(o1.getProperty().getIRI(), o2.getProperty().getIRI());
-                if (cmp != 0) {
-                    return cmp;
-                }
-                cmp = o1.getValue().compareTo(o2.getValue());
-                if (cmp != 0) {
-                    return cmp;
-                }
-                Iterator<OWLAnnotation> i1 = o1.getAnnotations().iterator();
-                Iterator<OWLAnnotation> i2 = o2.getAnnotations().iterator();
-                while (i1.hasNext() && i2.hasNext()) {
-                    cmp = compare(i1.next(), i2.next());
-                    if (cmp != 0) {
-                        return cmp;
-                    }
-                }
-                if (i1.hasNext()) {
-                    return +1;
-                }
-                if (i2.hasNext()) {
-                    return -1;
-                }
-                return 0;
+    }
 
+    private class OWLAnnotationComparator implements Comparator<OWLAnnotation> {
+        @Override
+        public int compare(OWLAnnotation o1, OWLAnnotation o2) {
+            int cmp;
+            cmp = iriLookupTable.compare(o1.getProperty().getIRI(), o2.getProperty().getIRI());
+            if (cmp != 0) {
+                return cmp;
             }
+            cmp = o1.getValue().compareTo(o2.getValue());
+            if (cmp != 0) {
+                return cmp;
+            }
+            Iterator<OWLAnnotation> i1 = o1.getAnnotations().iterator();
+            Iterator<OWLAnnotation> i2 = o2.getAnnotations().iterator();
+            while (i1.hasNext() && i2.hasNext()) {
+                cmp = compare(i1.next(), i2.next());
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            if (i1.hasNext()) {
+                return +1;
+            }
+            if (i2.hasNext()) {
+                return -1;
+            }
+            return 0;
 
         }
+
     }
 }
