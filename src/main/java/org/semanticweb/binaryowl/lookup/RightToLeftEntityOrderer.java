@@ -2,7 +2,6 @@ package org.semanticweb.binaryowl.lookup;/**
  * Created by ses on 8/18/15.
  */
 
-import com.sun.istack.internal.NotNull;
 import gnu.trove.map.hash.THashMap;
 import gnu.trove.set.hash.TLinkedHashSet;
 import org.semanticweb.owlapi.model.AxiomType;
@@ -16,6 +15,7 @@ import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nonnull;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Set;
@@ -66,7 +66,7 @@ public class RightToLeftEntityOrderer {
 
     Map<OWLEntity, Node> nodeMap = new THashMap<>();
 
-    @NotNull
+    @Nonnull
     Node getNode(OWLEntity entity) {
         Node result = nodeMap.get(entity);
         if (result == null) {
